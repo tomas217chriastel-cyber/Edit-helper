@@ -77,8 +77,14 @@ function setStatus(msg, isError) {
 }
 
 function evalScript(script) {
+    // CEP's own evalScript reports any uncaught exception (including calling
+    // a function that doesn't exist, e.g. after an incomplete update) as the
+    // generic string "EvalScript error." with no further detail. Wrapping
+    // every call in our own try/catch turns that into a real, readable
+    // error message we can actually act on.
+    const wrapped = `(function(){ try { return (${script}); } catch (e) { return JSON.stringify({ ok: false, error: String(e) }); } })()`;
     return new Promise((resolve) => {
-        csInterface.evalScript(script, (result) => {
+        csInterface.evalScript(wrapped, (result) => {
             try { resolve(JSON.parse(result)); }
             catch (e) { resolve({ ok: false, error: "Bad response from Premiere: " + result }); }
         });
