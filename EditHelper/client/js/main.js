@@ -29,11 +29,25 @@ const DEFAULT_SETTINGS = {
     giphyKey: "",
     tenorKey: "",
     localFolder: "",
+    presetsFolder: "",
     ffmpegPath: "ffmpeg",
     whisperPath: "whisper",
     targetLufs: -16,
     minGapSeconds: 0.2
 };
+
+// Recently downloaded memes/GIFs, stored separately from settings since it
+// grows over time - a simple capped list, newest first.
+function loadRecentDownloads() {
+    try { return JSON.parse(localStorage.getItem("eh_recent_downloads") || "[]"); }
+    catch (e) { return []; }
+}
+
+function addRecentDownload(entry) {
+    const list = loadRecentDownloads();
+    list.unshift(entry);
+    localStorage.setItem("eh_recent_downloads", JSON.stringify(list.slice(0, 40)));
+}
 
 function loadSettings() {
     try {
@@ -373,6 +387,142 @@ $("btnGenerateSubtitles").addEventListener("click", async () => {
 });
 
 // ---------------------------------------------------------------------------
+// Quick Edit: personal Premiere presets + built-in one-click effects
+// ---------------------------------------------------------------------------
+function scanPresets(folder) {
+    const results = [];
+    function walk(dir) {
+        let entries;
+        try { entries = fs.readdirSync(dir, { withFileTypes: true }); }
+        catch (e) { return; }
+        for (const entry of entries) {
+            const full = path.join(dir, entry.name);
+            if (entry.isDirectory()) { walk(full); continue; }
+            if (path.extname(entry.name).toLowerCase() === ".prfpset") {
+                results.push({ name: entry.name.replace(/\.prfpset$/i, ""), path: full });
+            }
+        }
+    }
+    if (folder) walk(folder);
+    return results;
+}
+
+function renderPresetsList() {
+    const container = $("presetsList");
+    const presets = scanPresets(settings.presetsFolder);
+    if (!presets.length) {
+        container.innerHTML = `<div class="preset-empty">No presets found. Set your Premiere presets folder in Settings.</div>`;
+        return;
+    }
+    container.innerHTML = "";
+    presets.forEach((preset) => {
+        const row = document.createElement("div");
+        row.className = "preset-row";
+        row.textContent = preset.name;
+        row.title = preset.path;
+        row.addEventListener("dblclick", () => applyPreset(preset));
+        container.appendChild(row);
+    });
+}
+
+async function applyPreset(preset) {
+    setStatus(`Applying preset "${preset.name}"...`);
+    const result = await evalScript(`$$eh_applyPresetToSelectedClip(${JSON.stringify(preset.path)})`);
+    if (!result.ok) { setStatus("Error: " + result.error, true); return; }
+    setStatus(`Applied preset "${preset.name}".`);
+}
+
+$("btnRefreshPresets").addEventListener("click", renderPresetsList);
+
+const QUICK_EFFECTS = [
+    { key: "zoomIn", name: "Zoom In", sliderMin: 0.1, sliderMax: 2, sliderStep: 0.1, sliderDefault: 0.4, labelFn: (v) => `${v.toFixed(1)}s ramp - lower = punchier` },
+    { key: "zoomOut", name: "Zoom Out", sliderMin: 0.1, sliderMax: 2, sliderStep: 0.1, sliderDefault: 0.4, labelFn: (v) => `${v.toFixed(1)}s ramp - lower = punchier` },
+    { key: "shake", name: "Camera Shake", sliderMin: 2, sliderMax: 40, sliderStep: 1, sliderDefault: 12, labelFn: (v) => `${v}px intensity` },
+    { key: "impactPunch", name: "Impact Punch (zoom + shake)", sliderMin: 2, sliderMax: 40, sliderStep: 1, sliderDefault: 15, labelFn: (v) => `${v}px intensity` },
+    { key: "whiteFlash", name: "White Flash", sliderMin: 0.05, sliderMax: 1, sliderStep: 0.05, sliderDefault: 0.2, labelFn: (v) => `${v.toFixed(2)}s flash` },
+    { key: "blackFlash", name: "Black Flash", sliderMin: 0.05, sliderMax: 1, sliderStep: 0.05, sliderDefault: 0.2, labelFn: (v) => `${v.toFixed(2)}s flash` }
+];
+
+function renderQuickEffects() {
+    const container = $("quickEffectsList");
+    container.innerHTML = "";
+    QUICK_EFFECTS.forEach((fx) => {
+        const row = document.createElement("div");
+        row.className = "quick-effect-row";
+        row.innerHTML = `
+            <div class="quick-effect-top">
+                <span class="quick-effect-name">${fx.name}</span>
+                <span class="quick-effect-value">${fx.labelFn(fx.sliderDefault)}</span>
+            </div>
+            <input type="range" min="${fx.sliderMin}" max="${fx.sliderMax}" step="${fx.sliderStep}" value="${fx.sliderDefault}" />
+            <button class="quick-effect-apply">Apply to Selected Clip</button>
+        `;
+        const slider = row.querySelector("input[type=range]");
+        const valueLabel = row.querySelector(".quick-effect-value");
+        slider.addEventListener("input", () => {
+            valueLabel.textContent = fx.labelFn(parseFloat(slider.value));
+        });
+        slider.addEventListener("click", (e) => e.stopPropagation());
+        const apply = () => applyQuickEffect(fx.key, parseFloat(slider.value), fx.name);
+        row.querySelector(".quick-effect-apply").addEventListener("click", apply);
+        row.addEventListener("dblclick", apply);
+        container.appendChild(row);
+    });
+}
+
+async function applyQuickEffect(kind, value, label) {
+    if (kind === "whiteFlash" || kind === "blackFlash") {
+        await applyFlashEffect(kind, value, label);
+        return;
+    }
+    setStatus(`Applying ${label}...`);
+    const result = await evalScript(`$$eh_applyMotionEffect(${JSON.stringify(kind)}, ${value})`);
+    if (!result.ok) { setStatus("Error: " + result.error, true); return; }
+    setStatus(`Applied ${label}.`);
+}
+
+async function applyFlashEffect(kind, duration, label) {
+    setStatus("Reading selected clip...");
+    const clipInfo = await evalScript("$$eh_getSelectedVideoClip()");
+    if (!clipInfo.ok) { setStatus("Error: " + clipInfo.error, true); return; }
+
+    const frameInfo = await evalScript("$$eh_getFrameSize()");
+    if (!frameInfo.ok) { setStatus("Error: " + frameInfo.error, true); return; }
+
+    const tempDir = getCacheDir();
+    if (!fs.existsSync(tempDir)) fs.mkdirSync(tempDir, { recursive: true });
+
+    const color = kind === "whiteFlash" ? "white" : "black";
+    const outPath = path.join(tempDir, `flash_${Date.now()}.mov`);
+    const fadeHalf = (duration / 2).toFixed(3);
+
+    setStatus(`Rendering ${label}...`);
+    const args = [
+        "-y",
+        "-f", "lavfi", "-i", `color=c=${color}:s=${frameInfo.width}x${frameInfo.height}:d=${duration}`,
+        "-vf", `format=yuva420p,fade=t=in:st=0:d=${fadeHalf}:alpha=1,fade=t=out:st=${fadeHalf}:d=${fadeHalf}:alpha=1`,
+        "-c:v", "qtrle",
+        outPath
+    ];
+
+    const renderOk = await new Promise((resolve) => {
+        execFile(settings.ffmpegPath, args, { maxBuffer: 1024 * 1024 * 20 }, (err, stdout, stderr) => {
+            if (err) { setStatus("ffmpeg render failed: " + (stderr || err.message), true); resolve(false); return; }
+            resolve(true);
+        });
+    });
+    if (!renderOk) return;
+
+    setStatus("Inserting flash onto the timeline...");
+    const insertResult = await evalScript(`$$eh_insertOverlayAtTime(${JSON.stringify(outPath)}, ${clipInfo.start})`);
+    if (!insertResult.ok) { setStatus("Error: " + insertResult.error, true); return; }
+    setStatus(`Inserted ${label} on track V${insertResult.track + 1}.`);
+}
+
+renderPresetsList();
+renderQuickEffects();
+
+// ---------------------------------------------------------------------------
 // Meme / GIF finder
 // ---------------------------------------------------------------------------
 const GENRE_KEYWORDS = {
@@ -493,17 +643,22 @@ $("btnSearch").addEventListener("click", async () => {
     $("resultsGrid").innerHTML = "";
     selectedResultIndex = -1;
 
-    const results = [];
+    let results = [];
 
-    if (typeFilter !== "local") {
-        const [giphyResults, tenorResults] = await Promise.all([
-            searchGiphy(effectiveQuery, 15),
-            searchTenor(effectiveQuery, 15)
-        ]);
-        results.push(...giphyResults, ...tenorResults);
-    }
-    if (typeFilter !== "gif" || typeFilter === "local") {
-        results.push(...scanLocalFolder(settings.localFolder, query, genre));
+    if (genre === "recent") {
+        const q = query.toLowerCase();
+        results = loadRecentDownloads().filter((r) => !q || (r.title || "").toLowerCase().indexOf(q) !== -1);
+    } else {
+        if (typeFilter !== "local") {
+            const [giphyResults, tenorResults] = await Promise.all([
+                searchGiphy(effectiveQuery, 15),
+                searchTenor(effectiveQuery, 15)
+            ]);
+            results.push(...giphyResults, ...tenorResults);
+        }
+        if (typeFilter !== "gif" || typeFilter === "local") {
+            results.push(...scanLocalFolder(settings.localFolder, query, genre));
+        }
     }
 
     lastResults = results;
@@ -543,8 +698,9 @@ $("btnInsert").addEventListener("click", async () => {
 
     setStatus("Preparing media...");
     let localPath = result.full;
+    const alreadyLocal = result.source === "local" || result.source === "recent";
 
-    if (result.source !== "local") {
+    if (!alreadyLocal) {
         try {
             const cacheDir = getCacheDir();
             if (!fs.existsSync(cacheDir)) fs.mkdirSync(cacheDir, { recursive: true });
@@ -552,6 +708,7 @@ $("btnInsert").addEventListener("click", async () => {
             localPath = path.join(cacheDir, fileName);
             setStatus("Downloading media...");
             await downloadFile(result.full, localPath);
+            addRecentDownload({ source: "recent", title: result.title, thumb: localPath, full: localPath, ext: result.ext });
         } catch (e) {
             setStatus("Download failed: " + e.message, true);
             return;
@@ -571,6 +728,7 @@ function populateSettingsForm() {
     $("giphyKey").value = settings.giphyKey;
     $("tenorKey").value = settings.tenorKey;
     $("localFolder").value = settings.localFolder;
+    $("presetsFolder").value = settings.presetsFolder;
     $("ffmpegPath").value = settings.ffmpegPath;
     $("whisperPath").value = settings.whisperPath;
     $("targetLufs").value = settings.targetLufs;
@@ -581,10 +739,12 @@ $("btnSaveSettings").addEventListener("click", () => {
     settings.giphyKey = $("giphyKey").value.trim();
     settings.tenorKey = $("tenorKey").value.trim();
     settings.localFolder = $("localFolder").value.trim();
+    settings.presetsFolder = $("presetsFolder").value.trim();
     settings.ffmpegPath = $("ffmpegPath").value.trim() || "ffmpeg";
     settings.whisperPath = $("whisperPath").value.trim() || "whisper";
     saveSettings(settings);
     setStatus("Settings saved.");
+    renderPresetsList();
 });
 
 $("btnBrowseFolder").addEventListener("click", () => {

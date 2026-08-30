@@ -6,6 +6,8 @@ A Premiere Pro extension panel that:
 - **Normalizes audio loudness with one click** to a target LUFS (broadcast/streaming standard), measuring each clip's actual source audio with `ffmpeg` and applying the right gain automatically.
 - **Finds memes/GIFs/images** from Giphy, Tenor, and a local folder you point it at, filterable by keyword and by genre/topic (Minecraft, Roblox, Trends, Gaming, Documentary, Nature, Tech), and inserts your pick onto the timeline at the playhead.
 - **Transcribes speech (Czech, Slovak, English, or auto-detect) and generates styled, animated subtitles** with one click — 5 trendy caption looks (bold white/black-stroke, yellow impact, neon glow, clean minimal, boxed karaoke-style), each with a pop/bounce-in animation per line, rendered as a transparent overlay clip dropped onto the timeline above your footage.
+- **Quick Edit tab**: lists your own saved Premiere effect/transition presets and applies one to the selected clip on double-click, plus 6 built-in one-click effects with a customizable slider each — Zoom In, Zoom Out, Camera Shake, Impact Punch (zoom+shake, popular for gaming highlight moments), White Flash, and Black Flash.
+- **"Recently Downloaded" filter** on the Memes tab — every GIF/meme you've downloaded through the panel is remembered so you can quickly reuse it without searching again.
 
 It's a CEP (Common Extensibility Platform) panel — the framework Premiere plugins have used for years — because that's what actually exposes the timeline internals needed for gap detection/removal and clip-level audio gain. It is not distributed through Adobe Exchange; you install it locally.
 
@@ -66,6 +68,14 @@ Click **Save Settings**.
 - Click **Transcribe & Insert Styled Subtitles**. It extracts just that clip's audio, transcribes it locally with Whisper, builds the styled/animated captions, renders them as a transparent overlay video, and drops that overlay onto the topmost video track lined up with the clip. Your original footage is untouched — the captions are a separate clip you can move, delete, or restyle by re-running with a different style choice.
 - The 5 styles: **Bold Pop** (white, thick black stroke — the classic MrBeast/TikTok look), **Yellow Impact** (bright yellow, black stroke), **Neon Glow** (white with a magenta glow-style outline), **Clean Minimal** (smaller, subtle shadow, no heavy stroke — good for documentary/vlog tone), and **Karaoke Box** (white text on a solid dark background bar). Every style pops in with a quick scale bounce as each line appears.
 
+**Quick Edit tab**
+- *Your Premiere presets*: point Settings → "Premiere presets folder" at your saved-presets folder (typically `Documents\Adobe\Premiere Pro\<version>\Presets` on Windows, `~/Documents/Adobe/Premiere Pro/<version>/Presets` on Mac — the folder Premiere's own Effects panel saves to when you right-click an effect/transition and choose "Save Preset"). Click **Refresh List**, then double-click a preset name to apply it to whichever clip is currently selected on the timeline.
+- *Quick effects*: select a clip, drag the slider under an effect to taste, then double-click the row (or press its Apply button).
+  - **Zoom In / Zoom Out** — the slider sets how fast the zoom ramps (lower = punchier snap-zoom, higher = a slow push).
+  - **Camera Shake** — the slider sets shake intensity in pixels.
+  - **Impact Punch** — a quick zoom-in plus shake together, good for hit/kill-moment emphasis in gaming edits; slider controls shake intensity.
+  - **White Flash / Black Flash** — a quick full-frame flash inserted as an overlay at the clip's start; slider controls flash duration.
+
 ## Notes and honest limitations
 
 - **Gap removal and the audio Volume/Level control use Premiere's internal "QE" scripting layer.** It's the same undocumented-but-widely-used API that most existing "remove gaps" Premiere scripts rely on, since Adobe's public scripting API doesn't expose empty-space detection or ripple delete. It's been stable for years but Adobe could change it in a future Premiere version — if a button stops working after a Premiere update, that's the likely reason. Check the panel's status bar for the exact error (or right-click the panel → Inspect Element → Console for full details).
@@ -74,6 +84,7 @@ Click **Save Settings**.
 - There's no native OS folder-picker dialog (would need extra Node modules) — paste the folder path directly in Settings instead.
 - **Subtitles rely on Whisper being installed separately** (it's a large, actively-maintained open-source project, not something we can bundle into a small panel download). Transcription accuracy for Czech and Slovak is very good with Whisper's default/`small` model but improves further with a larger model (`whisper file.wav --model medium ...`) at the cost of speed — you can pass extra flags by editing `runWhisper()` in `client/js/main.js` if you want to change the model.
 - **The pop animation and styling are done via the ASS subtitle format** (rendered through ffmpeg's bundled libass), the same underlying technique most "animated caption" apps use — not a Premiere-native caption feature. This makes it reliable across Premiere versions, but it also means the captions are a burned overlay clip rather than editable native Premiere caption text; to change wording after the fact, edit the transcript logic and regenerate rather than double-clicking text on the timeline.
+- **Quick Edit is the most experimental part of the panel.** Applying a saved preset uses the same internal QE layer as gap removal, via a method (`filters.addPreset`) that's consistent with how similar community tools work but isn't something covered in Adobe's public documentation — if double-clicking a preset does nothing or errors, send me the exact status-bar message and we'll adjust. Zoom/Shake/Impact Punch keyframe the "Motion" effect that's present on every video clip by default (Scale and Position properties) — this is a documented mechanism, but exact behavior can vary by Premiere version; if a slider effect doesn't animate as expected, check Effect Controls on that clip to see what keyframes actually landed.
 
 ## Project layout
 

@@ -9,6 +9,7 @@
     <div class="tabs">
         <div class="tab active" data-target="viewTimeline">Timeline</div>
         <div class="tab" data-target="viewSubtitles">Subtitles</div>
+        <div class="tab" data-target="viewQuickEdit">Quick Edit</div>
         <div class="tab" data-target="viewMemes">Memes</div>
         <div class="tab" data-target="viewSettings">Settings</div>
     </div>
@@ -66,6 +67,21 @@
         </section>
     </div>
 
+    <div id="viewQuickEdit" class="panel-view">
+        <section class="card">
+            <h2>Your Premiere presets</h2>
+            <p class="hint">Double-click a preset to apply it to the selected clip on the timeline. Set your presets folder in Settings if the list is empty.</p>
+            <button id="btnRefreshPresets">Refresh List</button>
+            <div id="presetsList" class="presets-list"></div>
+        </section>
+
+        <section class="card">
+            <h2>Quick effects</h2>
+            <p class="hint">Select a clip on the timeline, adjust the slider, then double-click (or press Apply) on an effect.</p>
+            <div id="quickEffectsList" class="quick-effects-list"></div>
+        </section>
+    </div>
+
     <div id="viewMemes" class="panel-view">
         <section class="card">
             <h2>Find a meme / GIF / image</h2>
@@ -73,6 +89,7 @@
             <label>Genre / topic filter</label>
             <select id="genreFilter">
                 <option value="">Any</option>
+                <option value="recent">Recently Downloaded</option>
                 <option value="minecraft">Minecraft</option>
                 <option value="roblox">Roblox</option>
                 <option value="trends">Trends</option>
@@ -111,6 +128,11 @@
             <h2>Local meme/GIF folder</h2>
             <input type="text" id="localFolder" placeholder="C:\Memes or /Users/you/Memes" />
             <button id="btnBrowseFolder">How do I set this?</button>
+        </section>
+        <section class="card">
+            <h2>Premiere presets folder</h2>
+            <p class="hint">Typically <code>Documents\Adobe\Premiere Pro\&lt;version&gt;\Presets</code> (Windows) or <code>~/Documents/Adobe/Premiere Pro/&lt;version&gt;/Presets</code> (Mac).</p>
+            <input type="text" id="presetsFolder" placeholder="Path to your Premiere Presets folder" />
         </section>
         <section class="card">
             <h2>Advanced</h2>

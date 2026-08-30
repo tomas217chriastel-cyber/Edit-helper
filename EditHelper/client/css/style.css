@@ -154,3 +154,78 @@ button:hover {
 .style-preview span {
     padding: 2px 6px;
 }
+
+.presets-list {
+    max-height: 160px;
+    overflow-y: auto;
+    margin-top: 8px;
+    border: 1px solid #333;
+    border-radius: 4px;
+}
+
+.preset-row {
+    padding: 7px 10px;
+    border-bottom: 1px solid #2a2a2a;
+    cursor: pointer;
+}
+
+.preset-row:last-child {
+    border-bottom: none;
+}
+
+.preset-row:hover {
+    background: #333;
+}
+
+.preset-empty {
+    padding: 10px;
+    color: #888;
+    font-size: 11px;
+}
+
+.quick-effects-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin-top: 8px;
+}
+
+.quick-effect-row {
+    background: #1e1e1e;
+    border: 1px solid #333;
+    border-radius: 4px;
+    padding: 8px 10px;
+    cursor: pointer;
+}
+
+.quick-effect-row:hover {
+    border-color: #4a9eff;
+}
+
+.quick-effect-top {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 4px;
+}
+
+.quick-effect-name {
+    font-weight: bold;
+    color: #ddd;
+}
+
+.quick-effect-value {
+    color: #4a9eff;
+    font-size: 11px;
+}
+
+.quick-effect-row input[type="range"] {
+    width: 100%;
+}
+
+.quick-effect-apply {
+    margin-top: 6px;
+    width: auto;
+    padding: 4px 10px;
+    font-size: 11px;
+}

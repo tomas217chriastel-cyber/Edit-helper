@@ -286,6 +286,153 @@ function $$eh_insertOverlayAtTime(filePath, startSeconds) {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Quick Edit: personal presets + built-in Motion-based effects
+// ---------------------------------------------------------------------------
+// Premiere's public scripting API has no documented "apply preset" or
+// "keyframe an arbitrary effect" call, so this - like gap removal - leans on
+// the QE DOM (for presets) and on the Motion effect that every video clip
+// carries by default (for zoom/shake). This is the least-tested corner of
+// the whole panel; if a Quick Edit action errors, the exact message here is
+// what to go on.
+function $$eh_getSelectedClipAnyTrack() {
+    try {
+        var seq = app.project.activeSequence;
+        if (!seq) return $$eh_err("No active sequence. Open a sequence first.");
+
+        var groups = [
+            { tracks: seq.videoTracks, type: "video" },
+            { tracks: seq.audioTracks, type: "audio" }
+        ];
+        for (var g = 0; g < groups.length; g++) {
+            var tracks = groups[g].tracks;
+            for (var ti = 0; ti < tracks.numTracks; ti++) {
+                var track = tracks[ti];
+                for (var ci = 0; ci < track.clips.numItems; ci++) {
+                    var clip = track.clips[ci];
+                    var selected = false;
+                    try { selected = !!clip.isSelected(); } catch (e) {}
+                    if (selected) {
+                        return $$eh_ok({ trackType: groups[g].type, trackIndex: ti, clipIndex: ci, name: clip.name });
+                    }
+                }
+            }
+        }
+        return $$eh_err("No clip selected. Click a clip on the timeline first.");
+    } catch (e) {
+        return $$eh_err(e);
+    }
+}
+
+function $$eh_applyPresetToSelectedClip(presetPath) {
+    try {
+        var seq = app.project.activeSequence;
+        if (!seq) return $$eh_err("No active sequence. Open a sequence first.");
+
+        var clipResult = JSON.parse($$eh_getSelectedClipAnyTrack());
+        if (!clipResult.ok) return $$eh_err(clipResult.error);
+
+        var qeSeq = qe.project.getActiveSequence();
+        if (!qeSeq) return $$eh_err("Could not access the QE DOM for the active sequence.");
+
+        var qeTrack = clipResult.trackType === "video"
+            ? qeSeq.getVideoTrackAt(clipResult.trackIndex)
+            : qeSeq.getAudioTrackAt(clipResult.trackIndex);
+        if (!qeTrack) return $$eh_err("Could not access that track via the QE DOM.");
+
+        var qeItem = qeTrack.getItemAt(clipResult.clipIndex);
+        if (!qeItem) return $$eh_err("Could not access that clip via the QE DOM.");
+
+        qeItem.filters.addPreset(presetPath);
+        return $$eh_ok({ applied: presetPath });
+    } catch (e) {
+        return $$eh_err(e);
+    }
+}
+
+function $$eh_findComponentProperty(clip, componentDisplayName, propertyDisplayName) {
+    try {
+        var comps = clip.components;
+        for (var i = 0; i < comps.numItems; i++) {
+            var comp = comps[i];
+            if (comp.displayName === componentDisplayName) {
+                for (var p = 0; p < comp.properties.numItems; p++) {
+                    var prop = comp.properties[p];
+                    if (prop.displayName === propertyDisplayName) return prop;
+                }
+            }
+        }
+    } catch (e) {}
+    return null;
+}
+
+// kind: "zoomIn" | "zoomOut" | "shake" | "impactPunch"
+// paramValue: seconds (zoom ramp duration) or pixels (shake intensity)
+function $$eh_applyMotionEffect(kind, paramValue) {
+    try {
+        var seq = app.project.activeSequence;
+        if (!seq) return $$eh_err("No active sequence. Open a sequence first.");
+
+        var clipResult = JSON.parse($$eh_getSelectedVideoClip());
+        if (!clipResult.ok) return $$eh_err(clipResult.error);
+
+        var track = seq.videoTracks[clipResult.trackIndex];
+        var clip = track.clips[clipResult.clipIndex];
+
+        var TICKS_PER_SECOND = 254016000000;
+        function toTicks(sec) { return Math.round(sec * TICKS_PER_SECOND); }
+
+        var scaleProp = $$eh_findComponentProperty(clip, "Motion", "Scale");
+        var positionProp = $$eh_findComponentProperty(clip, "Motion", "Position");
+        paramValue = parseFloat(paramValue);
+
+        if (kind === "zoomIn" || kind === "zoomOut") {
+            if (!scaleProp) return $$eh_err("Could not find the Motion/Scale property on this clip.");
+            var duration = Math.min(Math.max(paramValue, 0.1), Math.max(clipResult.duration, 0.2));
+            var startScale = 100;
+            var endScale = kind === "zoomIn" ? 130 : 80;
+            scaleProp.setTimeVarying(true);
+            scaleProp.addKey(0);
+            scaleProp.setValueAtKey(0, startScale, true);
+            scaleProp.addKey(toTicks(duration));
+            scaleProp.setValueAtKey(toTicks(duration), endScale, true);
+            return $$eh_ok({ applied: kind, duration: duration });
+        }
+
+        if (kind === "shake" || kind === "impactPunch") {
+            if (!positionProp) return $$eh_err("Could not find the Motion/Position property on this clip.");
+            var intensity = Math.max(paramValue, 1);
+            var basePos = positionProp.getValue();
+            var baseX = basePos[0], baseY = basePos[1];
+            var shakeDuration = 0.35;
+            var steps = 8;
+            positionProp.setTimeVarying(true);
+            for (var s = 0; s <= steps; s++) {
+                var t = (shakeDuration / steps) * s;
+                var offsetX = (s === steps) ? 0 : (Math.random() - 0.5) * 2 * intensity;
+                var offsetY = (s === steps) ? 0 : (Math.random() - 0.5) * 2 * intensity;
+                var ticks = toTicks(t);
+                positionProp.addKey(ticks);
+                positionProp.setValueAtKey(ticks, [baseX + offsetX, baseY + offsetY], true);
+            }
+
+            if (kind === "impactPunch" && scaleProp) {
+                scaleProp.setTimeVarying(true);
+                scaleProp.addKey(0);
+                scaleProp.setValueAtKey(0, 115, true);
+                scaleProp.addKey(toTicks(shakeDuration));
+                scaleProp.setValueAtKey(toTicks(shakeDuration), 100, true);
+            }
+
+            return $$eh_ok({ applied: kind, intensity: intensity });
+        }
+
+        return $$eh_err("Unknown effect kind: " + kind);
+    } catch (e) {
+        return $$eh_err(e);
+    }
+}
+
 function $$eh_addVideoTrack() {
     try {
         var seq = app.project.activeSequence;
