@@ -6,8 +6,19 @@ const { execFile } = require("child_process");
 const fs = require("fs");
 const path = require("path");
 const https = require("https");
+const os = require("os");
 
 const csInterface = new CSInterface();
+
+// getSystemPath() can return "" on some setups; os.tmpdir() is always an
+// absolute, writable path, so it's a safe fallback instead of "." (which
+// resolves relative to Premiere's own process directory and isn't writable).
+function getCacheDir() {
+    let base = "";
+    try { base = csInterface.getSystemPath(CSInterface.SystemPath.USER_DATA); } catch (e) {}
+    if (!base) base = os.tmpdir();
+    return path.join(base, "edit-helper-cache");
+}
 
 // ---------------------------------------------------------------------------
 // Settings (persisted in localStorage - this is per-panel, local to the
@@ -330,7 +341,7 @@ $("btnGenerateSubtitles").addEventListener("click", async () => {
     const frameInfo = await evalScript("$$eh_getFrameSize()");
     if (!frameInfo.ok) { setStatus("Error: " + frameInfo.error, true); return; }
 
-    const tempDir = path.join(csInterface.getSystemPath(CSInterface.SystemPath.USER_DATA) || ".", "edit-helper-cache");
+    const tempDir = getCacheDir();
     if (!fs.existsSync(tempDir)) fs.mkdirSync(tempDir, { recursive: true });
 
     setStatus("Extracting audio for the selected clip...");
@@ -535,7 +546,7 @@ $("btnInsert").addEventListener("click", async () => {
 
     if (result.source !== "local") {
         try {
-            const cacheDir = path.join(csInterface.getSystemPath(CSInterface.SystemPath.USER_DATA) || ".", "edit-helper-cache");
+            const cacheDir = getCacheDir();
             if (!fs.existsSync(cacheDir)) fs.mkdirSync(cacheDir, { recursive: true });
             const fileName = `meme_${Date.now()}${result.ext}`;
             localPath = path.join(cacheDir, fileName);
