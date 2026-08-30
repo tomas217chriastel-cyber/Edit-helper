@@ -315,9 +315,15 @@ function extractTrimmedAudio(mediaPath, inSeconds, durationSeconds, outPath) {
 
 function runWhisper(mediaPath, language, outDir) {
     return new Promise((resolve) => {
-        const args = [mediaPath, "--output_format", "srt", "--output_dir", outDir, "--verbose", "False"];
+        // Support a multi-word command like "python -m whisper" - needed
+        // whenever pip installs the whisper.exe launcher somewhere not on
+        // PATH, which is a very common situation on Windows.
+        const commandParts = settings.whisperPath.trim().split(/\s+/);
+        const command = commandParts[0];
+        const baseArgs = commandParts.slice(1);
+        const args = baseArgs.concat([mediaPath, "--output_format", "srt", "--output_dir", outDir, "--verbose", "False"]);
         if (language && language !== "auto") args.push("--language", language);
-        execFile(settings.whisperPath, args, { maxBuffer: 1024 * 1024 * 50 }, (err, stdout, stderr) => {
+        execFile(command, args, { maxBuffer: 1024 * 1024 * 50 }, (err, stdout, stderr) => {
             if (err) {
                 resolve({ ok: false, error: "Whisper failed: " + (stderr || err.message) + "\nIs Whisper installed and on PATH? (pip install -U openai-whisper)" });
                 return;
