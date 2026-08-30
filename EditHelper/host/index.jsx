@@ -200,6 +200,92 @@ function $$eh_insertMediaAtPlayhead(filePath, mode) {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Subtitles: locate the clip to transcribe, get sequence resolution, and
+// drop the rendered subtitle overlay in at the right spot
+// ---------------------------------------------------------------------------
+function $$eh_getSelectedVideoClip() {
+    try {
+        var seq = app.project.activeSequence;
+        if (!seq) return $$eh_err("No active sequence. Open a sequence first.");
+
+        var videoTracks = seq.videoTracks;
+        for (var ti = 0; ti < videoTracks.numTracks; ti++) {
+            var track = videoTracks[ti];
+            for (var ci = 0; ci < track.clips.numItems; ci++) {
+                var clip = track.clips[ci];
+                var selected = false;
+                try { selected = !!clip.isSelected(); } catch (e) {}
+                if (!selected) continue;
+
+                var mediaPath = "";
+                try { mediaPath = clip.projectItem.getMediaPath(); } catch (e2) {}
+                if (!mediaPath) continue;
+
+                var startSec = parseFloat(clip.start.seconds);
+                var endSec = parseFloat(clip.end.seconds);
+                var inSec = 0;
+                try { inSec = parseFloat(clip.inPoint.seconds); } catch (e3) {}
+
+                return $$eh_ok({
+                    trackIndex: ti,
+                    clipIndex: ci,
+                    name: clip.name,
+                    mediaPath: mediaPath,
+                    start: startSec,
+                    end: endSec,
+                    duration: endSec - startSec,
+                    sourceIn: inSec
+                });
+            }
+        }
+        return $$eh_err("No video clip selected. Click a clip on the timeline first.");
+    } catch (e) {
+        return $$eh_err(e);
+    }
+}
+
+function $$eh_getFrameSize() {
+    try {
+        var seq = app.project.activeSequence;
+        if (!seq) return $$eh_err("No active sequence. Open a sequence first.");
+        var settings = seq.getSettings();
+        return $$eh_ok({
+            width: settings.videoFrameWidth,
+            height: settings.videoFrameHeight
+        });
+    } catch (e) {
+        return $$eh_err(e);
+    }
+}
+
+function $$eh_insertOverlayAtTime(filePath, startSeconds) {
+    try {
+        var seq = app.project.activeSequence;
+        if (!seq) return $$eh_err("No active sequence. Open a sequence first.");
+
+        app.project.importFiles([filePath], true, app.project.rootItem, false);
+
+        var projectItem = null;
+        var root = app.project.rootItem;
+        for (var i = root.children.numItems - 1; i >= 0; i--) {
+            var child = root.children[i];
+            var childPath = "";
+            try { childPath = child.getMediaPath(); } catch (e) {}
+            if (childPath === filePath) { projectItem = child; break; }
+        }
+        if (!projectItem) return $$eh_err("Import succeeded but the project item could not be located.");
+
+        var targetTrackIndex = seq.videoTracks.numTracks - 1;
+        var track = seq.videoTracks[targetTrackIndex];
+        track.overwriteClip(projectItem, parseFloat(startSeconds));
+
+        return $$eh_ok({ track: targetTrackIndex, time: parseFloat(startSeconds) });
+    } catch (e) {
+        return $$eh_err(e);
+    }
+}
+
 function $$eh_addVideoTrack() {
     try {
         var seq = app.project.activeSequence;

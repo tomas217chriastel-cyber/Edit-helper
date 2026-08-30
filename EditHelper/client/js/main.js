@@ -19,6 +19,7 @@ const DEFAULT_SETTINGS = {
     tenorKey: "",
     localFolder: "",
     ffmpegPath: "ffmpeg",
+    whisperPath: "whisper",
     targetLufs: -16,
     minGapSeconds: 0.2
 };
@@ -165,6 +166,199 @@ $("btnNormalize").addEventListener("click", async () => {
     if (!applyResult.ok) { setStatus("Error applying gain: " + applyResult.error, true); return; }
 
     setStatus(`Normalized ${applyResult.applied} clip(s) to ${targetI} LUFS.` + (failures ? ` (${failures} clip(s) could not be measured.)` : ""));
+});
+
+// ---------------------------------------------------------------------------
+// Subtitles: Whisper transcription + styled, pop-animated caption overlay
+// ---------------------------------------------------------------------------
+// 5 trendy caption looks, defined as ASS (Advanced SubStation Alpha) style
+// lines. ASS is the format every "animated TikTok-style caption" tool burns
+// under the hood (via ffmpeg's libass renderer) - it's the only reliable way
+// to get per-line scale/pop animation without needing to hand-build video
+// frames. Colours are ASS's native &HAABBGGRR hex order.
+const SUBTITLE_STYLES = {
+    boldPop: {
+        label: "Bold Pop", fontName: "Poppins ExtraBold", fontSize: 84,
+        primaryColour: "&H00FFFFFF", outlineColour: "&H00000000", backColour: "&H00000000",
+        bold: -1, borderStyle: 1, outline: 5, shadow: 0, alignment: 2, marginV: 90
+    },
+    yellowImpact: {
+        label: "Yellow Impact", fontName: "Poppins ExtraBold", fontSize: 84,
+        primaryColour: "&H0000FFFF", outlineColour: "&H00000000", backColour: "&H00000000",
+        bold: -1, borderStyle: 1, outline: 5, shadow: 0, alignment: 2, marginV: 90
+    },
+    neonGlow: {
+        label: "Neon Glow", fontName: "Poppins SemiBold", fontSize: 78,
+        primaryColour: "&H00FFFFFF", outlineColour: "&H00FF00FF", backColour: "&H00000000",
+        bold: -1, borderStyle: 1, outline: 4, shadow: 2, alignment: 2, marginV: 90
+    },
+    cleanMinimal: {
+        label: "Clean Minimal", fontName: "Poppins Medium", fontSize: 58,
+        primaryColour: "&H00FFFFFF", outlineColour: "&H00202020", backColour: "&H00000000",
+        bold: 0, borderStyle: 1, outline: 2, shadow: 1, alignment: 2, marginV: 70
+    },
+    karaokeBox: {
+        label: "Karaoke Box", fontName: "Poppins SemiBold", fontSize: 68,
+        primaryColour: "&H00FFFFFF", outlineColour: "&H00000000", backColour: "&H80000000",
+        bold: -1, borderStyle: 3, outline: 8, shadow: 0, alignment: 2, marginV: 90
+    }
+};
+
+function renderStylePreview(styleKey) {
+    const style = SUBTITLE_STYLES[styleKey];
+    const preview = $("stylePreview");
+    const stroke = style.borderStyle === 3 ? "none" : `-2px 0 ${style.outlineColour === "&H00000000" ? "#000" : "#c0c"}`;
+    preview.innerHTML = `<span style="color:#fff;font-family:'Poppins','Segoe UI',sans-serif;background:${style.borderStyle === 3 ? "rgba(0,0,0,0.6)" : "transparent"};-webkit-text-stroke:2px ${style.outlineColour === "&H00000000" ? "#000" : "#e040e0"};">${style.label}</span>`;
+    preview.querySelector("span").style.color = style.primaryColour === "&H0000FFFF" ? "#ffe500" : "#fff";
+}
+$("subtitleStyle").addEventListener("change", () => renderStylePreview($("subtitleStyle").value));
+renderStylePreview($("subtitleStyle").value);
+
+function parseSrt(text) {
+    const blocks = text.replace(/\r/g, "").split(/\n\n+/);
+    const cues = [];
+    blocks.forEach((block) => {
+        const lines = block.split("\n").filter(Boolean);
+        const timeLineIndex = lines.findIndex((l) => l.indexOf("-->") !== -1);
+        if (timeLineIndex === -1) return;
+        const match = lines[timeLineIndex].match(/(\d\d):(\d\d):(\d\d),(\d\d\d)\s*-->\s*(\d\d):(\d\d):(\d\d),(\d\d\d)/);
+        if (!match) return;
+        const start = (+match[1]) * 3600 + (+match[2]) * 60 + (+match[3]) + (+match[4]) / 1000;
+        const end = (+match[5]) * 3600 + (+match[6]) * 60 + (+match[7]) + (+match[8]) / 1000;
+        const text2 = lines.slice(timeLineIndex + 1).join(" ").trim();
+        if (text2) cues.push({ start, end, text: text2 });
+    });
+    return cues;
+}
+
+function toAssTime(seconds) {
+    seconds = Math.max(0, seconds);
+    const h = Math.floor(seconds / 3600);
+    const m = Math.floor((seconds % 3600) / 60);
+    const s = Math.floor(seconds % 60);
+    const cs = Math.round((seconds - Math.floor(seconds)) * 100);
+    const pad = (n) => String(n).padStart(2, "0");
+    return `${h}:${pad(m)}:${pad(s)}.${pad(cs)}`;
+}
+
+function buildAssContent(cues, style, width, height) {
+    const header = `[Script Info]
+ScriptType: v4.00+
+PlayResX: ${width}
+PlayResY: ${height}
+ScaledBorderAndShadow: yes
+
+[V4+ Styles]
+Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
+Style: Default,${style.fontName},${style.fontSize},${style.primaryColour},&H000000FF,${style.outlineColour},${style.backColour},${style.bold},0,0,0,100,100,0,0,${style.borderStyle},${style.outline},${style.shadow},${style.alignment},40,40,${style.marginV},1
+
+[Events]
+Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+`;
+    // Pop animation: each line scales in from 0% to a 112% overshoot, then
+    // settles to 100% - a classic bounce/pop-in, timed relative to that
+    // line's own start (ASS \t transform times are cue-relative, in ms).
+    const pop = "{\\fscx0\\fscy0\\t(0,150,\\fscx112\\fscy112)\\t(150,260,\\fscx100\\fscy100)}";
+    const lines = cues.map((cue) => {
+        const text = cue.text.replace(/\n/g, "\\N");
+        return `Dialogue: 0,${toAssTime(cue.start)},${toAssTime(cue.end)},Default,,0,0,0,,${pop}${text}`;
+    });
+    return header + lines.join("\n") + "\n";
+}
+
+// ffmpeg's filtergraph syntax treats ':' and '\' specially, which breaks
+// Windows paths (e.g. "C:\Users\...") unless escaped this way.
+function escapeFfmpegFilterPath(p) {
+    return p.replace(/\\/g, "/").replace(/:/g, "\\:");
+}
+
+function extractTrimmedAudio(mediaPath, inSeconds, durationSeconds, outPath) {
+    return new Promise((resolve) => {
+        const args = ["-y", "-ss", String(inSeconds), "-t", String(durationSeconds), "-i", mediaPath, "-vn", "-acodec", "pcm_s16le", "-ar", "16000", "-ac", "1", outPath];
+        execFile(settings.ffmpegPath, args, { maxBuffer: 1024 * 1024 * 50 }, (err, stdout, stderr) => {
+            if (err) { resolve({ ok: false, error: "Could not extract audio: " + (stderr || err.message) }); return; }
+            resolve({ ok: true, path: outPath });
+        });
+    });
+}
+
+function runWhisper(mediaPath, language, outDir) {
+    return new Promise((resolve) => {
+        const args = [mediaPath, "--output_format", "srt", "--output_dir", outDir, "--verbose", "False"];
+        if (language && language !== "auto") args.push("--language", language);
+        execFile(settings.whisperPath, args, { maxBuffer: 1024 * 1024 * 50 }, (err, stdout, stderr) => {
+            if (err) {
+                resolve({ ok: false, error: "Whisper failed: " + (stderr || err.message) + "\nIs Whisper installed and on PATH? (pip install -U openai-whisper)" });
+                return;
+            }
+            const base = path.basename(mediaPath, path.extname(mediaPath));
+            const srtPath = path.join(outDir, base + ".srt");
+            if (!fs.existsSync(srtPath)) {
+                resolve({ ok: false, error: "Whisper ran but produced no .srt file." });
+                return;
+            }
+            resolve({ ok: true, srtPath: srtPath });
+        });
+    });
+}
+
+function renderSubtitleOverlay(assPath, width, height, duration, outPath) {
+    return new Promise((resolve) => {
+        const escapedAss = escapeFfmpegFilterPath(assPath);
+        const args = [
+            "-y",
+            "-f", "lavfi", "-i", `color=c=black@0.0:s=${width}x${height}:d=${duration}`,
+            "-vf", `subtitles='${escapedAss}'`,
+            "-c:v", "qtrle",
+            outPath
+        ];
+        execFile(settings.ffmpegPath, args, { maxBuffer: 1024 * 1024 * 50 }, (err, stdout, stderr) => {
+            if (err) { resolve({ ok: false, error: "ffmpeg render failed: " + (stderr || err.message) }); return; }
+            resolve({ ok: true });
+        });
+    });
+}
+
+$("btnGenerateSubtitles").addEventListener("click", async () => {
+    const language = $("subtitleLanguage").value;
+    const style = SUBTITLE_STYLES[$("subtitleStyle").value];
+
+    setStatus("Reading selected clip...");
+    const clipInfo = await evalScript("$$eh_getSelectedVideoClip()");
+    if (!clipInfo.ok) { setStatus("Error: " + clipInfo.error, true); return; }
+
+    const frameInfo = await evalScript("$$eh_getFrameSize()");
+    if (!frameInfo.ok) { setStatus("Error: " + frameInfo.error, true); return; }
+
+    const tempDir = path.join(csInterface.getSystemPath(CSInterface.SystemPath.USER_DATA) || ".", "edit-helper-cache");
+    if (!fs.existsSync(tempDir)) fs.mkdirSync(tempDir, { recursive: true });
+
+    setStatus("Extracting audio for the selected clip...");
+    const trimmedWavPath = path.join(tempDir, `trim_${Date.now()}.wav`);
+    const trimResult = await extractTrimmedAudio(clipInfo.mediaPath, clipInfo.sourceIn || 0, clipInfo.duration, trimmedWavPath);
+    if (!trimResult.ok) { setStatus(trimResult.error, true); return; }
+
+    setStatus("Transcribing with Whisper (this can take a minute)...");
+    const whisperResult = await runWhisper(trimmedWavPath, language, tempDir);
+    if (!whisperResult.ok) { setStatus(whisperResult.error, true); return; }
+
+    const srtText = fs.readFileSync(whisperResult.srtPath, "utf8");
+    const cues = parseSrt(srtText);
+    if (!cues.length) { setStatus("Whisper didn't detect any speech in this clip.", true); return; }
+
+    setStatus(`Transcribed ${cues.length} line(s). Rendering styled subtitles...`);
+    const assPath = path.join(tempDir, `subs_${Date.now()}.ass`);
+    fs.writeFileSync(assPath, buildAssContent(cues, style, frameInfo.width, frameInfo.height), "utf8");
+
+    const overlayPath = path.join(tempDir, `subs_${Date.now()}.mov`);
+    const renderResult = await renderSubtitleOverlay(assPath, frameInfo.width, frameInfo.height, clipInfo.duration, overlayPath);
+    if (!renderResult.ok) { setStatus(renderResult.error, true); return; }
+
+    setStatus("Inserting subtitles onto the timeline...");
+    const insertResult = await evalScript(`$$eh_insertOverlayAtTime(${JSON.stringify(overlayPath)}, ${clipInfo.start})`);
+    if (!insertResult.ok) { setStatus("Error: " + insertResult.error, true); return; }
+
+    setStatus(`Inserted styled subtitles (${cues.length} line(s)) on track V${insertResult.track + 1}.`);
 });
 
 // ---------------------------------------------------------------------------
@@ -367,6 +561,7 @@ function populateSettingsForm() {
     $("tenorKey").value = settings.tenorKey;
     $("localFolder").value = settings.localFolder;
     $("ffmpegPath").value = settings.ffmpegPath;
+    $("whisperPath").value = settings.whisperPath;
     $("targetLufs").value = settings.targetLufs;
     $("minGap").value = settings.minGapSeconds;
 }
@@ -376,6 +571,7 @@ $("btnSaveSettings").addEventListener("click", () => {
     settings.tenorKey = $("tenorKey").value.trim();
     settings.localFolder = $("localFolder").value.trim();
     settings.ffmpegPath = $("ffmpegPath").value.trim() || "ffmpeg";
+    settings.whisperPath = $("whisperPath").value.trim() || "whisper";
     saveSettings(settings);
     setStatus("Settings saved.");
 });

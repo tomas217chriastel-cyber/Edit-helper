@@ -8,6 +8,7 @@
 <body>
     <div class="tabs">
         <div class="tab active" data-target="viewTimeline">Timeline</div>
+        <div class="tab" data-target="viewSubtitles">Subtitles</div>
         <div class="tab" data-target="viewMemes">Memes</div>
         <div class="tab" data-target="viewSettings">Settings</div>
     </div>
@@ -37,6 +38,31 @@
             <input type="number" id="targetLufs" step="1" value="-16" />
             <button id="btnNormalize">Normalize Audio</button>
             <p class="hint">Requires <b>ffmpeg</b> on your system PATH (used to measure loudness). Set a custom path in Settings if needed.</p>
+        </section>
+    </div>
+
+    <div id="viewSubtitles" class="panel-view">
+        <section class="card">
+            <h2>Auto-transcribe &amp; styled subtitles</h2>
+            <p class="hint">Click a clip on the timeline first, then generate. The subtitles are rendered as a transparent, animated overlay clip and dropped in above your footage - your original clip isn't touched.</p>
+            <label>Spoken language</label>
+            <select id="subtitleLanguage">
+                <option value="auto">Auto-detect</option>
+                <option value="czech">Czech</option>
+                <option value="slovak">Slovak</option>
+                <option value="english">English</option>
+            </select>
+            <label>Subtitle style</label>
+            <select id="subtitleStyle">
+                <option value="boldPop">Bold Pop - white / black stroke</option>
+                <option value="yellowImpact">Yellow Impact - black stroke</option>
+                <option value="neonGlow">Neon Glow - white / magenta</option>
+                <option value="cleanMinimal">Clean Minimal - soft shadow</option>
+                <option value="karaokeBox">Karaoke Box - solid background</option>
+            </select>
+            <div id="stylePreview" class="style-preview"></div>
+            <button id="btnGenerateSubtitles">Transcribe &amp; Insert Styled Subtitles</button>
+            <p class="hint">Requires <b>Whisper</b> (<code>pip install -U openai-whisper</code>) and <b>ffmpeg</b> on PATH. For the intended look, install the free <b>Poppins</b> font family (Google Fonts) on your system.</p>
         </section>
     </div>
 
@@ -90,6 +116,8 @@
             <h2>Advanced</h2>
             <label>ffmpeg path</label>
             <input type="text" id="ffmpegPath" placeholder="ffmpeg" />
+            <label>Whisper path (speech-to-text)</label>
+            <input type="text" id="whisperPath" placeholder="whisper" />
         </section>
         <button id="btnSaveSettings">Save Settings</button>
     </div>

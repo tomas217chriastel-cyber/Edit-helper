@@ -5,17 +5,20 @@ A Premiere Pro extension panel that:
 - Scans the active sequence and **removes empty gaps** on the timeline (video, audio, or both), with a minimum-gap-length threshold so intentional pauses aren't eaten.
 - **Normalizes audio loudness with one click** to a target LUFS (broadcast/streaming standard), measuring each clip's actual source audio with `ffmpeg` and applying the right gain automatically.
 - **Finds memes/GIFs/images** from Giphy, Tenor, and a local folder you point it at, filterable by keyword and by genre/topic (Minecraft, Roblox, Trends, Gaming, Documentary, Nature, Tech), and inserts your pick onto the timeline at the playhead.
+- **Transcribes speech (Czech, Slovak, English, or auto-detect) and generates styled, animated subtitles** with one click — 5 trendy caption looks (bold white/black-stroke, yellow impact, neon glow, clean minimal, boxed karaoke-style), each with a pop/bounce-in animation per line, rendered as a transparent overlay clip dropped onto the timeline above your footage.
 
 It's a CEP (Common Extensibility Platform) panel — the framework Premiere plugins have used for years — because that's what actually exposes the timeline internals needed for gap detection/removal and clip-level audio gain. It is not distributed through Adobe Exchange; you install it locally.
 
 ## 1. Requirements
 
 - Premiere Pro 2020 (14.0) or newer, Windows or macOS.
-- [ffmpeg](https://ffmpeg.org/download.html) installed and available on your system PATH (used only to *measure* loudness — nothing is re-encoded). Test with `ffmpeg -version` in a terminal.
+- [ffmpeg](https://ffmpeg.org/download.html) installed and available on your system PATH (used to measure loudness, extract audio, and render subtitle overlays). Test with `ffmpeg -version` in a terminal.
 - (Optional, for internet meme/GIF search) Free API keys:
   - Giphy: https://developers.giphy.com/
   - Tenor: https://tenor.com/gifapi
   - You can skip both and just use the local-folder search.
+- (Optional, for auto-transcription/subtitles) [OpenAI Whisper](https://github.com/openai/whisper) installed and on PATH: `pip install -U openai-whisper` (requires Python). Runs fully locally and offline, at no cost, and handles Czech and Slovak well.
+- (Optional, for the intended look of the subtitle styles) The free **Poppins** font family from [Google Fonts](https://fonts.google.com/specimen/Poppins), installed as a system font. If it's not installed, subtitles still render — just with your system's default fallback font instead of Poppins.
 
 ## 2. Install
 
@@ -57,12 +60,20 @@ Click **Save Settings**.
 - Type a keyword and/or pick a genre filter, choose your source (internet, local folder, or both), and click **Search**.
 - Click a result thumbnail to select it, choose whether to insert it as an overlay at the playhead (doesn't shift the timeline) or a rippled insert, then click **Insert Selected at Playhead**. Internet results are downloaded to a local cache folder first, then imported into your project like any other media.
 
+**Subtitles tab**
+- Click a clip on the timeline to select it (the one you want captioned).
+- Pick the spoken language (Czech, Slovak, English, or Auto-detect) and one of the 5 subtitle styles.
+- Click **Transcribe & Insert Styled Subtitles**. It extracts just that clip's audio, transcribes it locally with Whisper, builds the styled/animated captions, renders them as a transparent overlay video, and drops that overlay onto the topmost video track lined up with the clip. Your original footage is untouched — the captions are a separate clip you can move, delete, or restyle by re-running with a different style choice.
+- The 5 styles: **Bold Pop** (white, thick black stroke — the classic MrBeast/TikTok look), **Yellow Impact** (bright yellow, black stroke), **Neon Glow** (white with a magenta glow-style outline), **Clean Minimal** (smaller, subtle shadow, no heavy stroke — good for documentary/vlog tone), and **Karaoke Box** (white text on a solid dark background bar). Every style pops in with a quick scale bounce as each line appears.
+
 ## Notes and honest limitations
 
 - **Gap removal and the audio Volume/Level control use Premiere's internal "QE" scripting layer.** It's the same undocumented-but-widely-used API that most existing "remove gaps" Premiere scripts rely on, since Adobe's public scripting API doesn't expose empty-space detection or ripple delete. It's been stable for years but Adobe could change it in a future Premiere version — if a button stops working after a Premiere update, that's the likely reason. Check the panel's status bar for the exact error (or right-click the panel → Inspect Element → Console for full details).
 - **Loudness normalization** uses a single-pass `ffmpeg loudnorm` measurement, which gets you very close to the target (typically within a fraction of a dB) without the extra time cost of a full two-pass render. Good enough for one-click leveling; if you need broadcast-spec mastering-grade accuracy, run a proper two-pass loudnorm afterward.
 - **"Search the whole internet"** is implemented via Giphy's and Tenor's official public search APIs rather than open-ended web scraping — scraping arbitrary meme sites isn't something a distributable tool can legally or reliably do (most block it outright). Combined with your local folder, this covers the vast majority of meme/GIF search needs while staying on solid legal ground. You're welcome to extend `client/js/main.js`'s `searchGiphy`/`searchTenor` functions to add other APIs you have access to.
 - There's no native OS folder-picker dialog (would need extra Node modules) — paste the folder path directly in Settings instead.
+- **Subtitles rely on Whisper being installed separately** (it's a large, actively-maintained open-source project, not something we can bundle into a small panel download). Transcription accuracy for Czech and Slovak is very good with Whisper's default/`small` model but improves further with a larger model (`whisper file.wav --model medium ...`) at the cost of speed — you can pass extra flags by editing `runWhisper()` in `client/js/main.js` if you want to change the model.
+- **The pop animation and styling are done via the ASS subtitle format** (rendered through ffmpeg's bundled libass), the same underlying technique most "animated caption" apps use — not a Premiere-native caption feature. This makes it reliable across Premiere versions, but it also means the captions are a burned overlay clip rather than editable native Premiere caption text; to change wording after the fact, edit the transcript logic and regenerate rather than double-clicking text on the timeline.
 
 ## Project layout
 
