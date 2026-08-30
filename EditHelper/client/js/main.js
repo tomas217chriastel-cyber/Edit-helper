@@ -245,6 +245,17 @@ function renderStylePreview(styleKey) {
 $("subtitleStyle").addEventListener("change", () => renderStylePreview($("subtitleStyle").value));
 renderStylePreview($("subtitleStyle").value);
 
+$("strokeEnabled").addEventListener("change", () => {
+    $("strokeWidth").disabled = !$("strokeEnabled").checked;
+});
+$("strokeWidth").addEventListener("input", () => {
+    $("strokeWidthValue").textContent = `Stroke width: ${$("strokeWidth").value}`;
+});
+$("glowAmount").addEventListener("input", () => {
+    const v = parseInt($("glowAmount").value, 10);
+    $("glowAmountValue").textContent = v === 0 ? "Glow: off" : `Glow: ${v}`;
+});
+
 function parseSrt(text) {
     const blocks = text.replace(/\r/g, "").split(/\n\n+/);
     const cues = [];
@@ -272,7 +283,10 @@ function toAssTime(seconds) {
     return `${h}:${pad(m)}:${pad(s)}.${pad(cs)}`;
 }
 
-function buildAssContent(cues, style, width, height) {
+// overrides: { strokeEnabled, strokeWidth, glowAmount }
+function buildAssContent(cues, style, width, height, overrides) {
+    overrides = overrides || {};
+    const outline = overrides.strokeEnabled === false ? 0 : (overrides.strokeWidth != null ? overrides.strokeWidth : style.outline);
     const header = `[Script Info]
 ScriptType: v4.00+
 PlayResX: ${width}
@@ -281,7 +295,7 @@ ScaledBorderAndShadow: yes
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: Default,${style.fontName},${style.fontSize},${style.primaryColour},&H000000FF,${style.outlineColour},${style.backColour},${style.bold},0,0,0,100,100,0,0,${style.borderStyle},${style.outline},${style.shadow},${style.alignment},40,40,${style.marginV},1
+Style: Default,${style.fontName},${style.fontSize},${style.primaryColour},&H000000FF,${style.outlineColour},${style.backColour},${style.bold},0,0,0,100,100,0,0,${style.borderStyle},${outline},${style.shadow},${style.alignment},40,40,${style.marginV},1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
@@ -289,7 +303,11 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
     // Pop animation: each line scales in from 0% to a 112% overshoot, then
     // settles to 100% - a classic bounce/pop-in, timed relative to that
     // line's own start (ASS \t transform times are cue-relative, in ms).
-    const pop = "{\\fscx0\\fscy0\\t(0,150,\\fscx112\\fscy112)\\t(150,260,\\fscx100\\fscy100)}";
+    // \blur applies a soft gaussian blur to the outline/shadow edges - the
+    // standard libass technique for a "glow" look - driven by the slider.
+    const glow = overrides.glowAmount || 0;
+    const blurTag = glow > 0 ? `\\blur${glow}` : "";
+    const pop = `{${blurTag}\\fscx0\\fscy0\\t(0,150,\\fscx112\\fscy112)\\t(150,260,\\fscx100\\fscy100)}`;
     const lines = cues.map((cue) => {
         const text = cue.text.replace(/\n/g, "\\N");
         return `Dialogue: 0,${toAssTime(cue.start)},${toAssTime(cue.end)},Default,,0,0,0,,${pop}${text}`;
@@ -359,6 +377,11 @@ function renderSubtitleOverlay(assPath, width, height, duration, outPath) {
 $("btnGenerateSubtitles").addEventListener("click", async () => {
     const language = $("subtitleLanguage").value;
     const style = SUBTITLE_STYLES[$("subtitleStyle").value];
+    const overrides = {
+        strokeEnabled: $("strokeEnabled").checked,
+        strokeWidth: parseInt($("strokeWidth").value, 10),
+        glowAmount: parseInt($("glowAmount").value, 10)
+    };
 
     setStatus("Reading selected clip...");
     const clipInfo = await evalScript("$$eh_getSelectedVideoClip()");
@@ -385,7 +408,7 @@ $("btnGenerateSubtitles").addEventListener("click", async () => {
 
     setStatus(`Transcribed ${cues.length} line(s). Rendering styled subtitles...`);
     const assPath = path.join(tempDir, `subs_${Date.now()}.ass`);
-    fs.writeFileSync(assPath, buildAssContent(cues, style, frameInfo.width, frameInfo.height), "utf8");
+    fs.writeFileSync(assPath, buildAssContent(cues, style, frameInfo.width, frameInfo.height, overrides), "utf8");
 
     const overlayPath = path.join(tempDir, `subs_${Date.now()}.mov`);
     const renderResult = await renderSubtitleOverlay(assPath, frameInfo.width, frameInfo.height, clipInfo.duration, overlayPath);
@@ -770,10 +793,13 @@ $("btnBrowseFolder").addEventListener("click", () => {
 async function init() {
     populateSettingsForm();
     const status = await evalScript("$$eh_getStatus()");
+    const versionTag = status.hostVersion ? ` [host ${status.hostVersion}]` : " [host version unknown - very old host/index.jsx]";
     if (status.ok && status.hasSequence) {
-        setStatus(`Connected to sequence "${status.sequenceName}".`);
+        setStatus(`Connected to sequence "${status.sequenceName}".${versionTag}`);
+    } else if (status.ok) {
+        setStatus(`Open a sequence in Premiere Pro to get started.${versionTag}`);
     } else {
-        setStatus("Open a sequence in Premiere Pro to get started.");
+        setStatus("Error talking to Premiere: " + status.error, true);
     }
 }
 

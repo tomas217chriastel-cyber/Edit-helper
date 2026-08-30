@@ -229,3 +229,21 @@ button:hover {
     padding: 4px 10px;
     font-size: 11px;
 }
+
+.checkbox-label {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin: 10px 0 6px;
+    color: #ccc;
+}
+
+.checkbox-label input[type="checkbox"] {
+    width: auto;
+}
+
+.slider-value {
+    color: #4a9eff;
+    font-size: 11px;
+    margin: 2px 0 4px;
+}

@@ -62,8 +62,18 @@
                 <option value="karaokeBox">Karaoke Box - solid background</option>
             </select>
             <div id="stylePreview" class="style-preview"></div>
-            <button id="btnGenerateSubtitles">Transcribe &amp; Insert Styled Subtitles</button>
+
+            <label class="checkbox-label"><input type="checkbox" id="strokeEnabled" checked /> Outline / stroke</label>
+            <input type="range" id="strokeWidth" min="0" max="10" step="1" value="4" />
+            <div class="slider-value" id="strokeWidthValue">Stroke width: 4</div>
+
+            <label>Glow</label>
+            <input type="range" id="glowAmount" min="0" max="20" step="1" value="0" />
+            <div class="slider-value" id="glowAmountValue">Glow: off</div>
+
+            <button id="btnGenerateSubtitles">Transcribe &amp; Insert Styled Subtitles (Animated Overlay)</button>
             <p class="hint">Requires <b>Whisper</b> (<code>pip install -U openai-whisper</code>) and <b>ffmpeg</b> on PATH. For the intended look, install the free <b>Poppins</b> font family (Google Fonts) on your system.</p>
+            <p class="hint"><b>Note:</b> this mode renders the captions as a burned-in video overlay with the pop animation - it looks great but the text itself isn't editable afterward (you'd re-run this to change wording). If you want subtitles you can double-click and edit directly on the timeline, tell me and I'll build a plain-text native-caption mode for you as an alternative (no pop animation, since Premiere's native captions don't support keyframed animation).</p>
         </section>
     </div>
 

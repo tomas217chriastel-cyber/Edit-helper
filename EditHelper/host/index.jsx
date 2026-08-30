@@ -2,6 +2,11 @@
 // Runs inside Premiere Pro's ExtendScript engine. Every function here is called
 // from the panel via CSInterface.evalScript() and returns a JSON string.
 
+// Bump this whenever this file changes - shown in the panel's status bar on
+// load, so a stale/partially-updated install is immediately visible instead
+// of guessing from generic error messages.
+var EH_HOST_VERSION = "2026-08-31-1";
+
 app.enableQE();
 
 function $$eh_ok(data) {
@@ -447,12 +452,13 @@ function $$eh_addVideoTrack() {
 function $$eh_getStatus() {
     try {
         var seq = app.project.activeSequence;
-        if (!seq) return $$eh_ok({ hasSequence: false });
+        if (!seq) return $$eh_ok({ hasSequence: false, hostVersion: EH_HOST_VERSION });
         return $$eh_ok({
             hasSequence: true,
             sequenceName: seq.name,
             videoTracks: seq.videoTracks.numTracks,
-            audioTracks: seq.audioTracks.numTracks
+            audioTracks: seq.audioTracks.numTracks,
+            hostVersion: EH_HOST_VERSION
         });
     } catch (e) {
         return $$eh_err(e);
