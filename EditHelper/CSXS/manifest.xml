@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ExtensionManifest Version="7.0" ExtensionBundleId="com.edithelper.panel" ExtensionBundleVersion="1.0.0" ExtensionBundleName="Edit Helper" xmlns="http://ns.adobe.com/extension">
+    <ExtensionList>
+        <Extension Id="com.edithelper.panel.main" Version="1.0.0" />
+    </ExtensionList>
+    <ExecutionEnvironment>
+        <HostList>
+            <Host Name="PPRO" Version="[14.0,99.9]" />
+        </HostList>
+        <LocaleList>
+            <Locale Code="All" />
+        </LocaleList>
+        <RequiredRuntimeList>
+            <RequiredRuntime Name="CSXS" Version="9.0" />
+        </RequiredRuntimeList>
+    </ExecutionEnvironment>
+    <DispatchInfoList>
+        <Extension Id="com.edithelper.panel.main">
+            <DispatchInfo>
+                <Resources>
+                    <MainPath>./client/index.html</MainPath>
+                    <ScriptPath>./host/index.jsx</ScriptPath>
+                    <CEFCommandLine>
+                        <Parameter>--enable-nodejs</Parameter>
+                        <Parameter>--mixed-context</Parameter>
+                    </CEFCommandLine>
+                </Resources>
+                <Lifecycle>
+                    <AutoVisible>true</AutoVisible>
+                </Lifecycle>
+                <UI>
+                    <Type>Panel</Type>
+                    <Menu>Edit Helper</Menu>
+                    <Geometry>
+                        <Size>
+                            <Height>720</Height>
+                            <Width>440</Width>
+                        </Size>
+                        <MinSize>
+                            <Height>500</Height>
+                            <Width>360</Width>
+                        </MinSize>
+                    </Geometry>
+                    <Icons>
+                        <Icon Type="Normal">./icons/icon_normal.png</Icon>
+                        <Icon Type="RollOver">./icons/icon_rollover.png</Icon>
+                        <Icon Type="Disabled">./icons/icon_disabled.png</Icon>
+                        <Icon Type="DarkNormal">./icons/icon_dark_normal.png</Icon>
+                        <Icon Type="DarkRollOver">./icons/icon_dark_rollover.png</Icon>
+                    </Icons>
+                </UI>
+            </DispatchInfo>
+        </Extension>
+    </DispatchInfoList>
+</ExtensionManifest>

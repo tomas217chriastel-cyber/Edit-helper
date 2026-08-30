@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8" />
+    <title>Edit Helper</title>
+    <link rel="stylesheet" href="css/style.css" />
+</head>
+<body>
+    <div class="tabs">
+        <div class="tab active" data-target="viewTimeline">Timeline</div>
+        <div class="tab" data-target="viewMemes">Memes</div>
+        <div class="tab" data-target="viewSettings">Settings</div>
+    </div>
+
+    <div id="viewTimeline" class="panel-view active">
+        <section class="card">
+            <h2>Remove empty gaps</h2>
+            <label>Scope</label>
+            <select id="gapScope">
+                <option value="all">All tracks</option>
+                <option value="video">Video tracks only</option>
+                <option value="audio">Audio tracks only</option>
+            </select>
+            <label>Minimum gap length to remove (seconds)</label>
+            <input type="number" id="minGap" step="0.1" min="0" value="0.2" />
+            <button id="btnRemoveGaps">Remove Gaps</button>
+        </section>
+
+        <section class="card">
+            <h2>One-click audio loudness</h2>
+            <label>Apply to</label>
+            <select id="normalizeScope">
+                <option value="selected">Selected clips</option>
+                <option value="all">All audio clips on timeline</option>
+            </select>
+            <label>Target loudness (LUFS)</label>
+            <input type="number" id="targetLufs" step="1" value="-16" />
+            <button id="btnNormalize">Normalize Audio</button>
+            <p class="hint">Requires <b>ffmpeg</b> on your system PATH (used to measure loudness). Set a custom path in Settings if needed.</p>
+        </section>
+    </div>
+
+    <div id="viewMemes" class="panel-view">
+        <section class="card">
+            <h2>Find a meme / GIF / image</h2>
+            <input type="text" id="searchQuery" placeholder="Search keyword (e.g. 'explosion', 'facepalm')" />
+            <label>Genre / topic filter</label>
+            <select id="genreFilter">
+                <option value="">Any</option>
+                <option value="minecraft">Minecraft</option>
+                <option value="roblox">Roblox</option>
+                <option value="trends">Trends</option>
+                <option value="gaming">Gaming</option>
+                <option value="documentary">Documentary</option>
+                <option value="nature">Nature</option>
+                <option value="tech">Tech</option>
+            </select>
+            <label>Source</label>
+            <select id="typeFilter">
+                <option value="all">Internet + local folder</option>
+                <option value="gif">Internet (GIFs) only</option>
+                <option value="local">Local folder only</option>
+            </select>
+            <button id="btnSearch">Search</button>
+            <div id="resultsGrid" class="results-grid"></div>
+            <label>Insert mode</label>
+            <select id="insertMode">
+                <option value="overwrite">Overlay at playhead (don't shift timeline)</option>
+                <option value="insert">Insert at playhead (ripples timeline)</option>
+            </select>
+            <button id="btnInsert">Insert Selected at Playhead</button>
+        </section>
+    </div>
+
+    <div id="viewSettings" class="panel-view">
+        <section class="card">
+            <h2>API Keys</h2>
+            <p class="hint">Free keys: Giphy Developers portal, Google Tenor API. Stored only on this machine.</p>
+            <label>Giphy API key</label>
+            <input type="text" id="giphyKey" placeholder="Giphy API key" />
+            <label>Tenor API key</label>
+            <input type="text" id="tenorKey" placeholder="Tenor API key" />
+        </section>
+        <section class="card">
+            <h2>Local meme/GIF folder</h2>
+            <input type="text" id="localFolder" placeholder="C:\Memes or /Users/you/Memes" />
+            <button id="btnBrowseFolder">How do I set this?</button>
+        </section>
+        <section class="card">
+            <h2>Advanced</h2>
+            <label>ffmpeg path</label>
+            <input type="text" id="ffmpegPath" placeholder="ffmpeg" />
+        </section>
+        <button id="btnSaveSettings">Save Settings</button>
+    </div>
+
+    <div id="statusBar" class="status">Loading...</div>
+
+    <script src="js/CSInterface.js"></script>
+    <script src="js/main.js"></script>
+</body>
+</html>
