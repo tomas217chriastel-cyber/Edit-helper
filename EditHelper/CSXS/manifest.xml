@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<ExtensionManifest Version="7.0" ExtensionBundleId="com.edithelper.panel" ExtensionBundleVersion="1.0.0" ExtensionBundleName="Edit Helper" xmlns="http://ns.adobe.com/extension">
+<ExtensionManifest Version="7.0" ExtensionBundleId="com.edithelper.panel" ExtensionBundleVersion="1.0.0" ExtensionBundleName="Edit Helper">
     <ExtensionList>
         <Extension Id="com.edithelper.panel.main" Version="1.0.0" />
     </ExtensionList>
