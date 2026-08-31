@@ -113,9 +113,12 @@
                 <option value="all">Internet + local folder</option>
                 <option value="gif">Internet (GIFs) only</option>
                 <option value="local">Local folder only</option>
+                <option value="youtube">YouTube meme videos</option>
             </select>
             <button id="btnSearch">Search</button>
             <div id="resultsGrid" class="results-grid"></div>
+            <button id="btnLoadMore" class="secondary-button" hidden>Load More</button>
+            <p class="hint" id="youtubeHint" hidden>YouTube results need a free YouTube Data API key in Settings. Inserting a result also needs <b>yt-dlp</b> installed (downloads the full source video - trim it to the exact moment in Premiere afterward).</p>
             <label>Insert mode</label>
             <select id="insertMode">
                 <option value="overwrite">Overlay at playhead (don't shift timeline)</option>
@@ -128,11 +131,13 @@
     <div id="viewSettings" class="panel-view">
         <section class="card">
             <h2>API Keys</h2>
-            <p class="hint">Free keys: Giphy Developers portal, Google Tenor API. Stored only on this machine.</p>
+            <p class="hint">Free keys: Giphy Developers portal, Google Tenor API, YouTube Data API v3 (Google Cloud Console). Stored only on this machine.</p>
             <label>Giphy API key</label>
             <input type="text" id="giphyKey" placeholder="Giphy API key" />
             <label>Tenor API key</label>
             <input type="text" id="tenorKey" placeholder="Tenor API key" />
+            <label>YouTube Data API key</label>
+            <input type="text" id="youtubeKey" placeholder="YouTube Data API v3 key" />
         </section>
         <section class="card">
             <h2>Local meme/GIF folder</h2>
@@ -150,6 +155,9 @@
             <input type="text" id="ffmpegPath" placeholder="ffmpeg" />
             <label>Whisper path (speech-to-text)</label>
             <input type="text" id="whisperPath" placeholder="whisper" />
+            <label>yt-dlp path (YouTube video download)</label>
+            <input type="text" id="ytDlpPath" placeholder="yt-dlp" />
+            <p class="hint">Optional, only needed to insert a YouTube search result. Install with <code>pip install -U yt-dlp</code>. Downloading video from YouTube this way is outside YouTube's own Terms of Service (it's a third-party tool, not something YouTube provides) - it's your call whether that's acceptable for your use; searching itself (above) uses YouTube's official API and has no such issue.</p>
         </section>
         <button id="btnSaveSettings">Save Settings</button>
     </div>

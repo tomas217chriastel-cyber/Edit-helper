@@ -247,3 +247,11 @@ button:hover {
     font-size: 11px;
     margin: 2px 0 4px;
 }
+
+.secondary-button {
+    background: #333;
+}
+
+.secondary-button:hover {
+    background: #3d3d3d;
+}

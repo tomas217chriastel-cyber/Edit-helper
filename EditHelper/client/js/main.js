@@ -28,10 +28,12 @@ function getCacheDir() {
 const DEFAULT_SETTINGS = {
     giphyKey: "",
     tenorKey: "",
+    youtubeKey: "",
     localFolder: "",
     presetsFolder: "",
     ffmpegPath: "ffmpeg",
     whisperPath: "whisper",
+    ytDlpPath: "yt-dlp",
     targetLufs: -16,
     minGapSeconds: 0.2
 };
@@ -599,34 +601,88 @@ function downloadFile(url, destPath) {
     });
 }
 
-async function searchGiphy(query, limit) {
-    if (!settings.giphyKey) return [];
-    const url = `https://api.giphy.com/v1/gifs/search?api_key=${encodeURIComponent(settings.giphyKey)}&q=${encodeURIComponent(query)}&limit=${limit}&rating=pg-13`;
+// yt-dlp is a separate, user-installed tool - not something bundled here.
+// It downloads the whole source video (YouTube's API doesn't expose a way
+// to fetch just a "meme moment" - trim the result down in Premiere).
+function downloadYoutubeVideo(url, outPath) {
+    return new Promise((resolve) => {
+        const args = ["-f", "mp4/best", "-o", outPath, url];
+        execFile(settings.ytDlpPath, args, { maxBuffer: 1024 * 1024 * 200 }, (err, stdout, stderr) => {
+            if (err) {
+                resolve({ ok: false, error: "yt-dlp failed: " + (stderr || err.message) + "\nIs yt-dlp installed? (pip install -U yt-dlp)" });
+                return;
+            }
+            resolve({ ok: true });
+        });
+    });
+}
+
+// Each search function returns { results, cursor } where cursor is
+// whatever that provider needs to fetch the next page (null once exhausted)
+// - Giphy uses a numeric offset, Tenor and YouTube use opaque page tokens.
+async function searchGiphy(query, limit, offset) {
+    if (!settings.giphyKey) return { results: [], cursor: null };
+    const url = `https://api.giphy.com/v1/gifs/search?api_key=${encodeURIComponent(settings.giphyKey)}&q=${encodeURIComponent(query)}&limit=${limit}&offset=${offset || 0}&rating=pg-13`;
     try {
         const data = await httpsGetJson(url);
-        return (data.data || []).map((g) => ({
+        const results = (data.data || []).map((g) => ({
             source: "giphy",
             title: g.title,
             thumb: g.images.fixed_height_small.url,
             full: g.images.original.url,
             ext: ".gif"
         }));
-    } catch (e) { return []; }
+        const total = data.pagination ? data.pagination.total_count : 0;
+        const nextOffset = (offset || 0) + results.length;
+        return { results, cursor: results.length && nextOffset < total ? nextOffset : null };
+    } catch (e) { return { results: [], cursor: null }; }
 }
 
-async function searchTenor(query, limit) {
-    if (!settings.tenorKey) return [];
-    const url = `https://tenor.googleapis.com/v2/search?key=${encodeURIComponent(settings.tenorKey)}&q=${encodeURIComponent(query)}&limit=${limit}&contentfilter=medium`;
+async function searchTenor(query, limit, pos) {
+    if (!settings.tenorKey) return { results: [], cursor: null };
+    let url = `https://tenor.googleapis.com/v2/search?key=${encodeURIComponent(settings.tenorKey)}&q=${encodeURIComponent(query)}&limit=${limit}&contentfilter=medium`;
+    if (pos) url += `&pos=${encodeURIComponent(pos)}`;
     try {
         const data = await httpsGetJson(url);
-        return (data.results || []).map((r) => ({
+        const results = (data.results || []).map((r) => ({
             source: "tenor",
             title: r.content_description,
             thumb: r.media_formats.tinygif ? r.media_formats.tinygif.url : r.media_formats.gif.url,
             full: r.media_formats.gif.url,
             ext: ".gif"
         }));
-    } catch (e) { return []; }
+        return { results, cursor: data.next || null };
+    } catch (e) { return { results: [], cursor: null }; }
+}
+
+// Uses YouTube's official Data API v3 to find videos - this part is fully
+// legitimate, same "bring your own free key" pattern as Giphy/Tenor.
+// Actually pulling the video file (in the Memes tab's Insert button) is a
+// separate step via yt-dlp, called out on its own since that's outside
+// YouTube's own Terms of Service.
+function buildYoutubeQuery(query, genre) {
+    let q = (query || genre || "meme").trim();
+    if (genre && q.toLowerCase().indexOf(genre) === -1) q += " " + genre;
+    if (q.toLowerCase().indexOf("meme") === -1) q += " meme";
+    return q;
+}
+
+async function searchYouTube(query, genre, pageToken) {
+    if (!settings.youtubeKey) return { results: [], cursor: null };
+    const q = buildYoutubeQuery(query, genre);
+    let url = `https://www.googleapis.com/youtube/v3/search?part=snippet&type=video&maxResults=15&q=${encodeURIComponent(q)}&key=${encodeURIComponent(settings.youtubeKey)}`;
+    if (pageToken) url += `&pageToken=${encodeURIComponent(pageToken)}`;
+    try {
+        const data = await httpsGetJson(url);
+        const results = (data.items || []).map((item) => ({
+            source: "youtube",
+            title: item.snippet.title,
+            thumb: (item.snippet.thumbnails.medium || item.snippet.thumbnails.default).url,
+            full: `https://www.youtube.com/watch?v=${item.id.videoId}`,
+            ext: ".mp4"
+        }));
+        return { results, cursor: data.nextPageToken || null };
+    } catch (e) { return { results: [], cursor: null }; }
 }
 
 function scanLocalFolder(folderPath, query, genre) {
@@ -670,43 +726,75 @@ function scanLocalFolder(folderPath, query, genre) {
 
 let lastResults = [];
 let selectedResultIndex = -1;
+let searchState = { query: "", genre: "", typeFilter: "all", giphyCursor: 0, tenorCursor: null, youtubeCursor: null };
 
-$("btnSearch").addEventListener("click", async () => {
-    const query = $("searchQuery").value.trim();
-    const genre = $("genreFilter").value;
-    const typeFilter = $("typeFilter").value;
-    const effectiveQuery = genre && !query ? genre : query;
-
-    setStatus("Searching...");
-    $("resultsGrid").innerHTML = "";
-    selectedResultIndex = -1;
-
+async function fetchResultsPage(params, isFirstPage) {
+    const effectiveQuery = params.genre && !params.query ? params.genre : params.query;
     let results = [];
+    let anyMore = false;
 
-    if (genre === "recent") {
-        const q = query.toLowerCase();
-        results = loadRecentDownloads().filter((r) => !q || (r.title || "").toLowerCase().indexOf(q) !== -1);
-    } else {
-        if (typeFilter !== "local") {
-            const [giphyResults, tenorResults] = await Promise.all([
-                searchGiphy(effectiveQuery, 15),
-                searchTenor(effectiveQuery, 15)
-            ]);
-            results.push(...giphyResults, ...tenorResults);
+    if (params.genre === "recent") {
+        if (isFirstPage) {
+            const q = params.query.toLowerCase();
+            results = loadRecentDownloads().filter((r) => !q || (r.title || "").toLowerCase().indexOf(q) !== -1);
         }
-        if (typeFilter !== "gif" || typeFilter === "local") {
-            results.push(...scanLocalFolder(settings.localFolder, query, genre));
+    } else if (params.typeFilter === "youtube") {
+        const yt = await searchYouTube(params.query, params.genre, isFirstPage ? null : searchState.youtubeCursor);
+        results = yt.results;
+        searchState.youtubeCursor = yt.cursor;
+        anyMore = !!yt.cursor;
+    } else {
+        if (params.typeFilter !== "local") {
+            const [giphy, tenor] = await Promise.all([
+                searchGiphy(effectiveQuery, 15, isFirstPage ? 0 : searchState.giphyCursor),
+                searchTenor(effectiveQuery, 15, isFirstPage ? null : searchState.tenorCursor)
+            ]);
+            results.push(...giphy.results, ...tenor.results);
+            searchState.giphyCursor = giphy.cursor;
+            searchState.tenorCursor = tenor.cursor;
+            anyMore = !!giphy.cursor || !!tenor.cursor;
+        }
+        if (isFirstPage && (params.typeFilter !== "gif" || params.typeFilter === "local")) {
+            results.push(...scanLocalFolder(settings.localFolder, params.query, params.genre));
         }
     }
 
+    return { results, anyMore };
+}
+
+$("btnSearch").addEventListener("click", async () => {
+    searchState = {
+        query: $("searchQuery").value.trim(),
+        genre: $("genreFilter").value,
+        typeFilter: $("typeFilter").value,
+        giphyCursor: 0,
+        tenorCursor: null,
+        youtubeCursor: null
+    };
+
+    setStatus("Searching...");
+    selectedResultIndex = -1;
+    $("youtubeHint").hidden = searchState.typeFilter !== "youtube";
+
+    const { results, anyMore } = await fetchResultsPage(searchState, true);
     lastResults = results;
-    renderResults(results);
+    renderResults(lastResults);
+    $("btnLoadMore").hidden = !anyMore;
 
     if (!results.length) {
         setStatus("No results. Check your API keys / local folder in Settings, or try a different search.", true);
     } else {
         setStatus(`Found ${results.length} result(s).`);
     }
+});
+
+$("btnLoadMore").addEventListener("click", async () => {
+    setStatus("Loading more...");
+    const { results, anyMore } = await fetchResultsPage(searchState, false);
+    lastResults = lastResults.concat(results);
+    renderResults(lastResults);
+    $("btnLoadMore").hidden = !anyMore;
+    setStatus(`Found ${lastResults.length} result(s) total.`);
 });
 
 function renderResults(results) {
@@ -738,7 +826,15 @@ $("btnInsert").addEventListener("click", async () => {
     let localPath = result.full;
     const alreadyLocal = result.source === "local" || result.source === "recent";
 
-    if (!alreadyLocal) {
+    if (result.source === "youtube") {
+        const cacheDir = getCacheDir();
+        if (!fs.existsSync(cacheDir)) fs.mkdirSync(cacheDir, { recursive: true });
+        localPath = path.join(cacheDir, `yt_${Date.now()}.mp4`);
+        setStatus("Downloading video with yt-dlp (this brings in the full source video)...");
+        const ytResult = await downloadYoutubeVideo(result.full, localPath);
+        if (!ytResult.ok) { setStatus(ytResult.error, true); return; }
+        addRecentDownload({ source: "recent", title: result.title, thumb: localPath, full: localPath, ext: ".mp4" });
+    } else if (!alreadyLocal) {
         try {
             const cacheDir = getCacheDir();
             if (!fs.existsSync(cacheDir)) fs.mkdirSync(cacheDir, { recursive: true });
@@ -765,10 +861,12 @@ $("btnInsert").addEventListener("click", async () => {
 function populateSettingsForm() {
     $("giphyKey").value = settings.giphyKey;
     $("tenorKey").value = settings.tenorKey;
+    $("youtubeKey").value = settings.youtubeKey;
     $("localFolder").value = settings.localFolder;
     $("presetsFolder").value = settings.presetsFolder;
     $("ffmpegPath").value = settings.ffmpegPath;
     $("whisperPath").value = settings.whisperPath;
+    $("ytDlpPath").value = settings.ytDlpPath;
     $("targetLufs").value = settings.targetLufs;
     $("minGap").value = settings.minGapSeconds;
 }
@@ -776,10 +874,12 @@ function populateSettingsForm() {
 $("btnSaveSettings").addEventListener("click", () => {
     settings.giphyKey = $("giphyKey").value.trim();
     settings.tenorKey = $("tenorKey").value.trim();
+    settings.youtubeKey = $("youtubeKey").value.trim();
     settings.localFolder = $("localFolder").value.trim();
     settings.presetsFolder = $("presetsFolder").value.trim();
     settings.ffmpegPath = $("ffmpegPath").value.trim() || "ffmpeg";
     settings.whisperPath = $("whisperPath").value.trim() || "whisper";
+    settings.ytDlpPath = $("ytDlpPath").value.trim() || "yt-dlp";
     saveSettings(settings);
     setStatus("Settings saved.");
     renderPresetsList();

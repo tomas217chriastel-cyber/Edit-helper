@@ -8,6 +8,7 @@ A Premiere Pro extension panel that:
 - **Transcribes speech (Czech, Slovak, English, or auto-detect) and generates styled, animated subtitles** with one click — 5 trendy caption looks (bold white/black-stroke, yellow impact, neon glow, clean minimal, boxed karaoke-style), each with a pop/bounce-in animation per line, rendered as a transparent overlay clip dropped onto the timeline above your footage.
 - **Quick Edit tab**: lists your own saved Premiere effect/transition presets and applies one to the selected clip on double-click, plus 6 built-in one-click effects with a customizable slider each — Zoom In, Zoom Out, Camera Shake, Impact Punch (zoom+shake, popular for gaming highlight moments), White Flash, and Black Flash.
 - **"Recently Downloaded" filter** on the Memes tab — every GIF/meme you've downloaded through the panel is remembered so you can quickly reuse it without searching again.
+- **YouTube meme video search** — searches YouTube's official API for meme/reaction videos matching a mood or keyword (e.g. "angry" + Gaming filter finds angry-reaction gaming meme clips), with a **Load More** button on every internet source (Giphy, Tenor, YouTube) to keep paging through results instead of being capped at one batch.
 
 It's a CEP (Common Extensibility Platform) panel — the framework Premiere plugins have used for years — because that's what actually exposes the timeline internals needed for gap detection/removal and clip-level audio gain. It is not distributed through Adobe Exchange; you install it locally.
 
@@ -18,7 +19,9 @@ It's a CEP (Common Extensibility Platform) panel — the framework Premiere plug
 - (Optional, for internet meme/GIF search) Free API keys:
   - Giphy: https://developers.giphy.com/
   - Tenor: https://tenor.com/gifapi
-  - You can skip both and just use the local-folder search.
+  - YouTube Data API v3: create a project at https://console.cloud.google.com/, enable "YouTube Data API v3", create an API key. This has a modest free daily quota that's plenty for casual searching.
+  - You can skip all three and just use the local-folder search.
+- (Optional, only to actually insert a YouTube search result — searching itself doesn't need it) [yt-dlp](https://github.com/yt-dlp/yt-dlp) installed and on PATH: `pip install -U yt-dlp`. **Read the note under "Notes and honest limitations" below before installing this one** — it's a different kind of tool than the others here.
 - (Optional, for auto-transcription/subtitles) [OpenAI Whisper](https://github.com/openai/whisper) installed and on PATH: `pip install -U openai-whisper` (requires Python). Runs fully locally and offline, at no cost, and handles Czech and Slovak well.
 - (Optional, for the intended look of the subtitle styles) The free **Poppins** font family from [Google Fonts](https://fonts.google.com/specimen/Poppins), installed as a system font. If it's not installed, subtitles still render — just with your system's default fallback font instead of Poppins.
 
@@ -59,8 +62,10 @@ Click **Save Settings**.
 - *Normalize Audio*: choose "Selected clips" (select clips on the timeline first) or "All audio clips", set a target LUFS (-16 is a common default for online video; -14 for many streaming platforms), and click **Normalize Audio**. It measures each clip's real source audio loudness with ffmpeg and adjusts that clip's Volume/Level to hit the target, capped so it won't clip.
 
 **Memes tab**
-- Type a keyword and/or pick a genre filter, choose your source (internet, local folder, or both), and click **Search**.
-- Click a result thumbnail to select it, choose whether to insert it as an overlay at the playhead (doesn't shift the timeline) or a rippled insert, then click **Insert Selected at Playhead**. Internet results are downloaded to a local cache folder first, then imported into your project like any other media.
+- Type a keyword and/or pick a genre filter, choose your source (internet, local folder, both, or YouTube meme videos), and click **Search**.
+- If more results exist, a **Load More** button appears below the results grid — click it to fetch the next page from whichever internet source(s) you searched, appended to what's already shown.
+- **YouTube meme videos**: searches YouTube directly for clips matching your keyword, sharpened toward memes (e.g. typing "angry" with the Gaming genre filter searches for "angry gaming meme"). Needs a YouTube Data API key in Settings. This mode returns full videos — often already-short standalone clips other creators posted, but sometimes longer — you'll trim to the exact moment in Premiere after inserting.
+- Click a result thumbnail to select it, choose whether to insert it as an overlay at the playhead (doesn't shift the timeline) or a rippled insert, then click **Insert Selected at Playhead**. Internet results are downloaded to a local cache folder first, then imported into your project like any other media. YouTube results are downloaded via yt-dlp instead (see the note below).
 
 **Subtitles tab**
 - Click a clip on the timeline to select it (the one you want captioned).
@@ -85,6 +90,7 @@ Click **Save Settings**.
 - **Subtitles rely on Whisper being installed separately** (it's a large, actively-maintained open-source project, not something we can bundle into a small panel download). Transcription accuracy for Czech and Slovak is very good with Whisper's default/`small` model but improves further with a larger model (`whisper file.wav --model medium ...`) at the cost of speed — you can pass extra flags by editing `runWhisper()` in `client/js/main.js` if you want to change the model.
 - **The pop animation and styling are done via the ASS subtitle format** (rendered through ffmpeg's bundled libass), the same underlying technique most "animated caption" apps use — not a Premiere-native caption feature. This makes it reliable across Premiere versions, but it also means the captions are a burned overlay clip rather than editable native Premiere caption text; to change wording after the fact, edit the transcript logic and regenerate rather than double-clicking text on the timeline.
 - **Quick Edit is the most experimental part of the panel.** Applying a saved preset uses the same internal QE layer as gap removal, via a method (`filters.addPreset`) that's consistent with how similar community tools work but isn't something covered in Adobe's public documentation — if double-clicking a preset does nothing or errors, send me the exact status-bar message and we'll adjust. Zoom/Shake/Impact Punch keyframe the "Motion" effect that's present on every video clip by default (Scale and Position properties) — this is a documented mechanism, but exact behavior can vary by Premiere version; if a slider effect doesn't animate as expected, check Effect Controls on that clip to see what keyframes actually landed.
+- **YouTube search vs. YouTube download are two different things, deliberately.** Finding videos (the search box, thumbnails, titles) uses YouTube's official Data API — completely legitimate, same as the Giphy/Tenor integration. Actually downloading the video file when you click Insert uses `yt-dlp`, a separate, widely-used open-source tool that isn't provided or sanctioned by YouTube — doing that is outside YouTube's own Terms of Service, the same way it would be if you used any other third-party downloader yourself. It's not bundled or auto-installed for that reason; you install it deliberately, and it's your call whether downloading a given video for your own edit is something you're comfortable doing. Searching alone never touches yt-dlp at all.
 
 ## Project layout
 
