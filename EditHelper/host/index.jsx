@@ -5,7 +5,7 @@
 // Bump this whenever this file changes - shown in the panel's status bar on
 // load, so a stale/partially-updated install is immediately visible instead
 // of guessing from generic error messages.
-var EH_HOST_VERSION = "2026-08-31-1";
+var EH_HOST_VERSION = "2026-08-31-2";
 
 app.enableQE();
 
@@ -17,6 +17,28 @@ function $$eh_ok(data) {
 
 function $$eh_err(message) {
     return JSON.stringify({ ok: false, error: String(message) });
+}
+
+// Single, pre-written entry point the panel calls for everything, instead
+// of building a new try/catch wrapper as a text string on every call. A
+// dynamically-built wrapper string only gets checked by the ExtendScript
+// parser at the moment it's submitted - if anything about that construction
+// is wrong for this engine, it fails before our own try/catch ever runs,
+// which is indistinguishable from every other failure (CEP just reports the
+// generic "EvalScript error." either way). This function is parsed once,
+// with the file, so its own correctness doesn't depend on what gets called
+// through it. argsJson is a JSON-encoded array of arguments.
+function $$eh_dispatch(fnName, argsJson) {
+    try {
+        var fn = this[fnName];
+        if (typeof fn !== "function") {
+            return $$eh_err("Unknown host function: " + fnName + " (host version " + EH_HOST_VERSION + ")");
+        }
+        var args = argsJson ? JSON.parse(argsJson) : [];
+        return fn.apply(this, args);
+    } catch (e) {
+        return $$eh_err(e);
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -134,12 +156,11 @@ function $$eh_findLevelParam(clip) {
 }
 
 // entries: JSON string of [{trackIndex, clipIndex, gainDb}, ...]
-function $$eh_applyAudioGains(entriesJSON) {
+function $$eh_applyAudioGains(entries) {
     try {
         var seq = app.project.activeSequence;
         if (!seq) return $$eh_err("No active sequence. Open a sequence first.");
 
-        var entries = JSON.parse(entriesJSON);
         var audioTracks = seq.audioTracks;
         var applied = 0;
         var failed = [];

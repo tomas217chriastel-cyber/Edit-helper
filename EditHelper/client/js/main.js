@@ -76,16 +76,18 @@ function setStatus(msg, isError) {
     el.className = isError ? "status error" : "status";
 }
 
-function evalScript(script) {
-    // CEP's own evalScript reports any uncaught exception (including calling
-    // a function that doesn't exist, e.g. after an incomplete update) as the
-    // generic string "EvalScript error." with no further detail. Wrapping
-    // every call in our own try/catch turns that into a real, readable
-    // error message we can actually act on.
-    const wrapped = `(function(){ try { return (${script}); } catch (e) { return JSON.stringify({ ok: false, error: String(e) }); } })()`;
-    console.log("[EditHelper] sending to Premiere:", wrapped);
+// Calls a $$eh_ function in host/index.jsx by name instead of constructing
+// a new snippet of JavaScript as a string on every call. The only thing
+// ever sent to evalScript() is a call to the single, pre-written
+// $$eh_dispatch() function (parsed once when the file loads), with the
+// real function name and its arguments passed as plain string/JSON
+// literals - so there's no per-call code generation on the ExtendScript
+// side left to get subtly wrong.
+function callHost(fnName, args) {
+    const script = `$$eh_dispatch(${JSON.stringify(fnName)}, ${JSON.stringify(JSON.stringify(args || []))})`;
+    console.log("[EditHelper] calling host:", fnName, args);
     return new Promise((resolve) => {
-        csInterface.evalScript(wrapped, (result) => {
+        csInterface.evalScript(script, (result) => {
             console.log("[EditHelper] raw result from Premiere:", JSON.stringify(result));
             try { resolve(JSON.parse(result)); }
             catch (e) { resolve({ ok: false, error: "Bad response from Premiere: " + result }); }
@@ -115,8 +117,7 @@ $("btnRemoveGaps").addEventListener("click", async () => {
     settings.minGapSeconds = minGap;
     saveSettings(settings);
 
-    const script = `$$eh_removeGaps(${minGap}, "${scope}")`;
-    const result = await evalScript(script);
+    const result = await callHost("$$eh_removeGaps", [minGap, scope]);
     if (!result.ok) { setStatus("Error: " + result.error, true); return; }
     setStatus(`Removed ${result.removed} gap(s)${result.skipped ? ", " + result.skipped + " could not be removed" : ""}.`);
 });
@@ -159,7 +160,7 @@ $("btnNormalize").addEventListener("click", async () => {
     saveSettings(settings);
 
     setStatus("Reading clips from the timeline...");
-    const info = await evalScript(`$$eh_getClipSources(${onlySelected})`);
+    const info = await callHost("$$eh_getClipSources", [onlySelected]);
     if (!info.ok) { setStatus("Error: " + info.error, true); return; }
 
     const clips = info.clips;
@@ -195,7 +196,7 @@ $("btnNormalize").addEventListener("click", async () => {
     }
 
     setStatus("Applying gain to clips in Premiere...");
-    const applyResult = await evalScript(`$$eh_applyAudioGains(${JSON.stringify(JSON.stringify(entries))})`);
+    const applyResult = await callHost("$$eh_applyAudioGains", [entries]);
     if (!applyResult.ok) { setStatus("Error applying gain: " + applyResult.error, true); return; }
 
     setStatus(`Normalized ${applyResult.applied} clip(s) to ${targetI} LUFS.` + (failures ? ` (${failures} clip(s) could not be measured.)` : ""));
@@ -386,10 +387,10 @@ $("btnGenerateSubtitles").addEventListener("click", async () => {
     };
 
     setStatus("Reading selected clip...");
-    const clipInfo = await evalScript("$$eh_getSelectedVideoClip()");
+    const clipInfo = await callHost("$$eh_getSelectedVideoClip", []);
     if (!clipInfo.ok) { setStatus("Error: " + clipInfo.error, true); return; }
 
-    const frameInfo = await evalScript("$$eh_getFrameSize()");
+    const frameInfo = await callHost("$$eh_getFrameSize", []);
     if (!frameInfo.ok) { setStatus("Error: " + frameInfo.error, true); return; }
 
     const tempDir = getCacheDir();
@@ -417,7 +418,7 @@ $("btnGenerateSubtitles").addEventListener("click", async () => {
     if (!renderResult.ok) { setStatus(renderResult.error, true); return; }
 
     setStatus("Inserting subtitles onto the timeline...");
-    const insertResult = await evalScript(`$$eh_insertOverlayAtTime(${JSON.stringify(overlayPath)}, ${clipInfo.start})`);
+    const insertResult = await callHost("$$eh_insertOverlayAtTime", [overlayPath, clipInfo.start]);
     if (!insertResult.ok) { setStatus("Error: " + insertResult.error, true); return; }
 
     setStatus(`Inserted styled subtitles (${cues.length} line(s)) on track V${insertResult.track + 1}.`);
@@ -464,7 +465,7 @@ function renderPresetsList() {
 
 async function applyPreset(preset) {
     setStatus(`Applying preset "${preset.name}"...`);
-    const result = await evalScript(`$$eh_applyPresetToSelectedClip(${JSON.stringify(preset.path)})`);
+    const result = await callHost("$$eh_applyPresetToSelectedClip", [preset.path]);
     if (!result.ok) { setStatus("Error: " + result.error, true); return; }
     setStatus(`Applied preset "${preset.name}".`);
 }
@@ -513,17 +514,17 @@ async function applyQuickEffect(kind, value, label) {
         return;
     }
     setStatus(`Applying ${label}...`);
-    const result = await evalScript(`$$eh_applyMotionEffect(${JSON.stringify(kind)}, ${value})`);
+    const result = await callHost("$$eh_applyMotionEffect", [kind, value]);
     if (!result.ok) { setStatus("Error: " + result.error, true); return; }
     setStatus(`Applied ${label}.`);
 }
 
 async function applyFlashEffect(kind, duration, label) {
     setStatus("Reading selected clip...");
-    const clipInfo = await evalScript("$$eh_getSelectedVideoClip()");
+    const clipInfo = await callHost("$$eh_getSelectedVideoClip", []);
     if (!clipInfo.ok) { setStatus("Error: " + clipInfo.error, true); return; }
 
-    const frameInfo = await evalScript("$$eh_getFrameSize()");
+    const frameInfo = await callHost("$$eh_getFrameSize", []);
     if (!frameInfo.ok) { setStatus("Error: " + frameInfo.error, true); return; }
 
     const tempDir = getCacheDir();
@@ -551,7 +552,7 @@ async function applyFlashEffect(kind, duration, label) {
     if (!renderOk) return;
 
     setStatus("Inserting flash onto the timeline...");
-    const insertResult = await evalScript(`$$eh_insertOverlayAtTime(${JSON.stringify(outPath)}, ${clipInfo.start})`);
+    const insertResult = await callHost("$$eh_insertOverlayAtTime", [outPath, clipInfo.start]);
     if (!insertResult.ok) { setStatus("Error: " + insertResult.error, true); return; }
     setStatus(`Inserted ${label} on track V${insertResult.track + 1}.`);
 }
@@ -753,7 +754,7 @@ $("btnInsert").addEventListener("click", async () => {
     }
 
     setStatus("Inserting into the timeline...");
-    const insertResult = await evalScript(`$$eh_insertMediaAtPlayhead(${JSON.stringify(localPath)}, "${mode}")`);
+    const insertResult = await callHost("$$eh_insertMediaAtPlayhead", [localPath, mode]);
     if (!insertResult.ok) { setStatus("Error: " + insertResult.error, true); return; }
     setStatus(`Inserted on track V${insertResult.track + 1} at ${insertResult.time.toFixed(2)}s.`);
 });
@@ -794,7 +795,7 @@ $("btnBrowseFolder").addEventListener("click", () => {
 // ---------------------------------------------------------------------------
 async function init() {
     populateSettingsForm();
-    const status = await evalScript("$$eh_getStatus()");
+    const status = await callHost("$$eh_getStatus", []);
     const versionTag = status.hostVersion ? ` [host ${status.hostVersion}]` : " [host version unknown - very old host/index.jsx]";
     if (status.ok && status.hasSequence) {
         setStatus(`Connected to sequence "${status.sequenceName}".${versionTag}`);
