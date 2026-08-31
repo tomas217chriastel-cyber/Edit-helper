@@ -5,7 +5,47 @@
 // Bump this whenever this file changes - shown in the panel's status bar on
 // load, so a stale/partially-updated install is immediately visible instead
 // of guessing from generic error messages.
-var EH_HOST_VERSION = "2026-08-31-2";
+var EH_HOST_VERSION = "2026-08-31-3";
+
+// Some ExtendScript engines don't ship a native JSON object (older, or
+// certain app/version combinations) - every function in this file returns
+// its result via JSON.stringify, so if it's missing, absolutely everything
+// fails the instant it tries to return anything, while plain expressions
+// (that never touch JSON) work completely fine. That mismatch is exactly
+// what pointed here. This polyfill only ever runs if JSON is truly absent.
+if (typeof JSON === "undefined") {
+    var JSON = {};
+    JSON.stringify = function (value) {
+        var type = typeof value;
+        if (value === null || value === undefined) return "null";
+        if (type === "number" || type === "boolean") return String(value);
+        if (type === "string") {
+            return '"' + value.replace(/\\/g, "\\\\").replace(/"/g, '\\"')
+                .replace(/\n/g, "\\n").replace(/\r/g, "\\r").replace(/\t/g, "\\t") + '"';
+        }
+        if (value instanceof Array) {
+            var arrItems = [];
+            for (var i = 0; i < value.length; i++) arrItems.push(JSON.stringify(value[i]));
+            return "[" + arrItems.join(",") + "]";
+        }
+        if (type === "object") {
+            var objItems = [];
+            for (var key in value) {
+                var v = value[key];
+                if (typeof v === "function" || typeof v === "undefined") continue;
+                objItems.push(JSON.stringify(key) + ":" + JSON.stringify(v));
+            }
+            return "{" + objItems.join(",") + "}";
+        }
+        return "null";
+    };
+    // Only ever parses JSON this file itself generated and sent across the
+    // CEP bridge, or argument JSON built by the panel's own JSON.stringify -
+    // not arbitrary external input - so eval() here is safe.
+    JSON.parse = function (text) {
+        return eval("(" + text + ")");
+    };
+}
 
 app.enableQE();
 
