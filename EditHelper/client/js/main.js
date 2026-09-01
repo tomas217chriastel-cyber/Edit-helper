@@ -430,32 +430,53 @@ $("btnGenerateSubtitles").addEventListener("click", async () => {
 // Quick Edit: personal Premiere presets + built-in one-click effects
 // ---------------------------------------------------------------------------
 function scanPresets(folder) {
+    // Defensive against a pasted path that carries surrounding quotes
+    // (common when copying a path from some sources) - fs calls treat the
+    // quotes as literal characters and just fail to find anything.
+    folder = (folder || "").trim().replace(/^["']|["']$/g, "");
+
     const results = [];
-    function walk(dir) {
+    let rootError = null;
+
+    function walk(dir, isRoot) {
         let entries;
-        try { entries = fs.readdirSync(dir, { withFileTypes: true }); }
-        catch (e) { return; }
+        try {
+            entries = fs.readdirSync(dir, { withFileTypes: true });
+        } catch (e) {
+            if (isRoot) rootError = e.message;
+            return;
+        }
         for (const entry of entries) {
             const full = path.join(dir, entry.name);
-            if (entry.isDirectory()) { walk(full); continue; }
+            if (entry.isDirectory()) { walk(full, false); continue; }
             if (path.extname(entry.name).toLowerCase() === ".prfpset") {
                 results.push({ name: entry.name.replace(/\.prfpset$/i, ""), path: full });
             }
         }
     }
-    if (folder) walk(folder);
-    return results;
+
+    if (folder) walk(folder, true);
+    return { results, folder, rootError };
 }
 
 function renderPresetsList() {
     const container = $("presetsList");
-    const presets = scanPresets(settings.presetsFolder);
-    if (!presets.length) {
-        container.innerHTML = `<div class="preset-empty">No presets found. Set your Premiere presets folder in Settings.</div>`;
+    const { results, folder, rootError } = scanPresets(settings.presetsFolder);
+
+    if (!folder) {
+        container.innerHTML = `<div class="preset-empty">No presets folder set. Add it in Settings.</div>`;
+        return;
+    }
+    if (rootError) {
+        container.innerHTML = `<div class="preset-empty">Can't read that folder: ${escapeHtml(rootError)}<br>Path searched: ${escapeHtml(folder)}</div>`;
+        return;
+    }
+    if (!results.length) {
+        container.innerHTML = `<div class="preset-empty">No .prfpset files found under:<br>${escapeHtml(folder)}<br>(searched all subfolders)</div>`;
         return;
     }
     container.innerHTML = "";
-    presets.forEach((preset) => {
+    results.forEach((preset) => {
         const row = document.createElement("div");
         row.className = "preset-row";
         row.textContent = preset.name;
@@ -673,10 +694,19 @@ function buildYoutubeQuery(query, genre) {
     return q;
 }
 
-async function searchYouTube(query, genre, pageToken) {
+// duration: "medium" (4-20 min) skips almost all YouTube Shorts, since the
+// Data API has no direct "exclude Shorts" flag - Shorts are ~under 60s, so
+// filtering out the API's own "short" (<4 min) bucket removes them along
+// with other very short clips, which also biases toward the longer,
+// compilation-style videos being asked for. "long" (20+ min) narrows
+// further to compilations specifically. order lets results favor either
+// text-match relevance or raw popularity (view count).
+async function searchYouTube(query, genre, pageToken, duration, order) {
     if (!settings.youtubeKey) return { results: [], cursor: null };
     const q = buildYoutubeQuery(query, genre);
     let url = `https://www.googleapis.com/youtube/v3/search?part=snippet&type=video&maxResults=15&q=${encodeURIComponent(q)}&key=${encodeURIComponent(settings.youtubeKey)}`;
+    if (duration && duration !== "any") url += `&videoDuration=${duration}`;
+    if (order) url += `&order=${encodeURIComponent(order)}`;
     if (pageToken) url += `&pageToken=${encodeURIComponent(pageToken)}`;
     try {
         const data = await httpsGetJson(url);
@@ -687,6 +717,48 @@ async function searchYouTube(query, genre, pageToken) {
             full: `https://www.youtube.com/watch?v=${item.id.videoId}`,
             ext: ".mp4"
         }));
+        return { results, cursor: data.nextPageToken || null };
+    } catch (e) { return { results: [], cursor: null }; }
+}
+
+// Playlists are exactly the "compilations other people curated" the user
+// wants - search finds candidate playlists; double-clicking one drills in
+// via playlistItems.list to show the actual videos inside it, from which a
+// real video can be selected and inserted like any other result.
+async function searchYoutubePlaylists(query, genre, pageToken) {
+    if (!settings.youtubeKey) return { results: [], cursor: null };
+    const q = buildYoutubeQuery(query, genre);
+    let url = `https://www.googleapis.com/youtube/v3/search?part=snippet&type=playlist&maxResults=15&q=${encodeURIComponent(q)}&key=${encodeURIComponent(settings.youtubeKey)}`;
+    if (pageToken) url += `&pageToken=${encodeURIComponent(pageToken)}`;
+    try {
+        const data = await httpsGetJson(url);
+        const results = (data.items || []).map((item) => ({
+            source: "youtube-playlist",
+            title: item.snippet.title,
+            thumb: (item.snippet.thumbnails.medium || item.snippet.thumbnails.default).url,
+            playlistId: item.id.playlistId
+        }));
+        return { results, cursor: data.nextPageToken || null };
+    } catch (e) { return { results: [], cursor: null }; }
+}
+
+async function fetchPlaylistVideos(playlistId, pageToken) {
+    let url = `https://www.googleapis.com/youtube/v3/playlistItems?part=snippet&maxResults=25&playlistId=${encodeURIComponent(playlistId)}&key=${encodeURIComponent(settings.youtubeKey)}`;
+    if (pageToken) url += `&pageToken=${encodeURIComponent(pageToken)}`;
+    try {
+        const data = await httpsGetJson(url);
+        const results = (data.items || [])
+            .filter((item) => item.snippet && item.snippet.resourceId && item.snippet.resourceId.videoId)
+            .map((item) => {
+                const thumbs = item.snippet.thumbnails || {};
+                return {
+                    source: "youtube",
+                    title: item.snippet.title,
+                    thumb: (thumbs.medium || thumbs.default || {}).url || "",
+                    full: `https://www.youtube.com/watch?v=${item.snippet.resourceId.videoId}`,
+                    ext: ".mp4"
+                };
+            });
         return { results, cursor: data.nextPageToken || null };
     } catch (e) { return { results: [], cursor: null }; }
 }
@@ -732,23 +804,48 @@ function scanLocalFolder(folderPath, query, genre) {
 
 let lastResults = [];
 let selectedResultIndex = -1;
-let searchState = { query: "", genre: "", typeFilter: "all", giphyCursor: 0, tenorCursor: null, youtubeCursor: null };
+let searchState = {
+    query: "", genre: "", typeFilter: "all",
+    youtubeContentType: "video", youtubeDuration: "medium", youtubeOrder: "relevance",
+    giphyCursor: 0, tenorCursor: null, youtubeCursor: null
+};
+let playlistContext = null; // { playlistId, title, cursor } once a playlist is opened
+
+function updateYoutubeOptionsVisibility() {
+    const isYoutube = $("typeFilter").value === "youtube";
+    $("youtubeOptions").hidden = !isYoutube;
+    $("youtubeHint").hidden = !isYoutube;
+}
+$("typeFilter").addEventListener("change", updateYoutubeOptionsVisibility);
+updateYoutubeOptionsVisibility();
 
 async function fetchResultsPage(params, isFirstPage) {
     const effectiveQuery = params.genre && !params.query ? params.genre : params.query;
     let results = [];
     let anyMore = false;
 
-    if (params.genre === "recent") {
+    if (playlistContext) {
+        const pl = await fetchPlaylistVideos(playlistContext.playlistId, isFirstPage ? null : playlistContext.cursor);
+        results = pl.results;
+        playlistContext.cursor = pl.cursor;
+        anyMore = !!pl.cursor;
+    } else if (params.genre === "recent") {
         if (isFirstPage) {
             const q = params.query.toLowerCase();
             results = loadRecentDownloads().filter((r) => !q || (r.title || "").toLowerCase().indexOf(q) !== -1);
         }
     } else if (params.typeFilter === "youtube") {
-        const yt = await searchYouTube(params.query, params.genre, isFirstPage ? null : searchState.youtubeCursor);
-        results = yt.results;
-        searchState.youtubeCursor = yt.cursor;
-        anyMore = !!yt.cursor;
+        if (params.youtubeContentType === "playlist") {
+            const pl = await searchYoutubePlaylists(params.query, params.genre, isFirstPage ? null : searchState.youtubeCursor);
+            results = pl.results;
+            searchState.youtubeCursor = pl.cursor;
+            anyMore = !!pl.cursor;
+        } else {
+            const yt = await searchYouTube(params.query, params.genre, isFirstPage ? null : searchState.youtubeCursor, params.youtubeDuration, params.youtubeOrder);
+            results = yt.results;
+            searchState.youtubeCursor = yt.cursor;
+            anyMore = !!yt.cursor;
+        }
     } else {
         if (params.typeFilter !== "local") {
             const [giphy, tenor] = await Promise.all([
@@ -769,10 +866,15 @@ async function fetchResultsPage(params, isFirstPage) {
 }
 
 $("btnSearch").addEventListener("click", async () => {
+    playlistContext = null;
+    $("playlistBreadcrumb").hidden = true;
     searchState = {
         query: $("searchQuery").value.trim(),
         genre: $("genreFilter").value,
         typeFilter: $("typeFilter").value,
+        youtubeContentType: $("youtubeContentType").value,
+        youtubeDuration: $("youtubeDuration").value,
+        youtubeOrder: $("youtubeOrder").value,
         giphyCursor: 0,
         tenorCursor: null,
         youtubeCursor: null
@@ -780,7 +882,6 @@ $("btnSearch").addEventListener("click", async () => {
 
     setStatus("Searching...");
     selectedResultIndex = -1;
-    $("youtubeHint").hidden = searchState.typeFilter !== "youtube";
 
     const { results, anyMore } = await fetchResultsPage(searchState, true);
     lastResults = results;
@@ -803,18 +904,54 @@ $("btnLoadMore").addEventListener("click", async () => {
     setStatus(`Found ${lastResults.length} result(s) total.`);
 });
 
+async function openPlaylist(result) {
+    playlistContext = { playlistId: result.playlistId, title: result.title, cursor: null };
+    selectedResultIndex = -1;
+    setStatus(`Opening playlist "${result.title}"...`);
+
+    const breadcrumb = $("playlistBreadcrumb");
+    breadcrumb.hidden = false;
+    breadcrumb.innerHTML = "";
+    const back = document.createElement("a");
+    back.href = "#";
+    back.textContent = "< Back to search results";
+    back.style.color = "#4a9eff";
+    back.addEventListener("click", (e) => {
+        e.preventDefault();
+        playlistContext = null;
+        breadcrumb.hidden = true;
+        lastResults = [];
+        renderResults([]);
+        $("btnLoadMore").hidden = true;
+        setStatus("Back to search.");
+    });
+    breadcrumb.appendChild(back);
+    breadcrumb.appendChild(document.createTextNode(` - Playlist: ${result.title}`));
+
+    const { results, anyMore } = await fetchResultsPage(searchState, true);
+    lastResults = results;
+    renderResults(lastResults);
+    $("btnLoadMore").hidden = !anyMore;
+    setStatus(results.length ? `Found ${results.length} video(s) in this playlist.` : "This playlist has no videos, or they're private/unavailable.");
+}
+
 function renderResults(results) {
     const grid = $("resultsGrid");
     grid.innerHTML = "";
     results.forEach((r, i) => {
         const cell = document.createElement("div");
         cell.className = "result-cell";
-        cell.innerHTML = `<img src="${r.thumb}" alt="${escapeHtml(r.title || "")}" /><div class="result-label">${escapeHtml(r.source)}</div>`;
+        const label = r.source === "youtube-playlist" ? "playlist" : r.source;
+        cell.innerHTML = `<img src="${r.thumb}" alt="${escapeHtml(r.title || "")}" /><div class="result-label">${escapeHtml(label)}</div>`;
         cell.addEventListener("click", () => {
             document.querySelectorAll(".result-cell").forEach((c) => c.classList.remove("selected"));
             cell.classList.add("selected");
             selectedResultIndex = i;
         });
+        if (r.source === "youtube-playlist") {
+            cell.addEventListener("dblclick", () => openPlaylist(r));
+            cell.title = "Double-click to open this playlist";
+        }
         grid.appendChild(cell);
     });
 }
@@ -826,6 +963,10 @@ function escapeHtml(s) {
 $("btnInsert").addEventListener("click", async () => {
     if (selectedResultIndex < 0) { setStatus("Select a result first.", true); return; }
     const result = lastResults[selectedResultIndex];
+    if (result.source === "youtube-playlist") {
+        setStatus("That's a playlist, not a video - double-click it to open it, then select a video inside.", true);
+        return;
+    }
     const mode = $("insertMode").value;
 
     setStatus("Preparing media...");

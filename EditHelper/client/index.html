@@ -115,7 +115,28 @@
                 <option value="local">Local folder only</option>
                 <option value="youtube">YouTube meme videos</option>
             </select>
+
+            <div id="youtubeOptions" hidden>
+                <label>YouTube content type</label>
+                <select id="youtubeContentType">
+                    <option value="video">Videos</option>
+                    <option value="playlist">Playlists (compilations - double-click one to open it)</option>
+                </select>
+                <label>Video length</label>
+                <select id="youtubeDuration">
+                    <option value="medium">Skip Shorts (4+ min)</option>
+                    <option value="long">Compilations only (20+ min)</option>
+                    <option value="any">Any length</option>
+                </select>
+                <label>Sort by</label>
+                <select id="youtubeOrder">
+                    <option value="relevance">Most Relevant</option>
+                    <option value="viewCount">Most Popular</option>
+                </select>
+            </div>
+
             <button id="btnSearch">Search</button>
+            <div id="playlistBreadcrumb" class="hint" hidden></div>
             <div id="resultsGrid" class="results-grid"></div>
             <button id="btnLoadMore" class="secondary-button" hidden>Load More</button>
             <p class="hint" id="youtubeHint" hidden>YouTube results need a free YouTube Data API key in Settings. Inserting a result also needs <b>yt-dlp</b> installed (downloads the full source video - trim it to the exact moment in Premiere afterward).</p>
