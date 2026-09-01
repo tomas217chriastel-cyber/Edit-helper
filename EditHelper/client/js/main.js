@@ -606,8 +606,14 @@ function downloadFile(url, destPath) {
 // to fetch just a "meme moment" - trim the result down in Premiere).
 function downloadYoutubeVideo(url, outPath) {
     return new Promise((resolve) => {
-        const args = ["-f", "mp4/best", "-o", outPath, url];
-        execFile(settings.ytDlpPath, args, { maxBuffer: 1024 * 1024 * 200 }, (err, stdout, stderr) => {
+        // Same multi-word command support as Whisper's path - pip often
+        // installs the yt-dlp launcher somewhere not on PATH, especially on
+        // Windows, so "python -m yt_dlp" needs to work as a fallback too.
+        const commandParts = settings.ytDlpPath.trim().split(/\s+/);
+        const command = commandParts[0];
+        const baseArgs = commandParts.slice(1);
+        const args = baseArgs.concat(["-f", "mp4/best", "-o", outPath, url]);
+        execFile(command, args, { maxBuffer: 1024 * 1024 * 200 }, (err, stdout, stderr) => {
             if (err) {
                 resolve({ ok: false, error: "yt-dlp failed: " + (stderr || err.message) + "\nIs yt-dlp installed? (pip install -U yt-dlp)" });
                 return;
