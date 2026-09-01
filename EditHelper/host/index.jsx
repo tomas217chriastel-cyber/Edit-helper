@@ -5,7 +5,7 @@
 // Bump this whenever this file changes - shown in the panel's status bar on
 // load, so a stale/partially-updated install is immediately visible instead
 // of guessing from generic error messages.
-var EH_HOST_VERSION = "2026-08-31-3";
+var EH_HOST_VERSION = "2026-08-31-4";
 
 // Some ExtendScript engines don't ship a native JSON object (older, or
 // certain app/version combinations) - every function in this file returns
@@ -434,6 +434,21 @@ function $$eh_findComponentProperty(clip, componentDisplayName, propertyDisplayN
 
 // kind: "zoomIn" | "zoomOut" | "shake" | "impactPunch"
 // paramValue: seconds (zoom ramp duration) or pixels (shake intensity)
+// Clears any existing keyframes on a Motion property and pins it to a
+// single static value, so repeatedly adjusting a Quick Edit slider and
+// pressing Apply always starts from a known-clean baseline and overwrites
+// the previous result, instead of stacking more keyframes on top each time.
+function $$eh_resetMotionProperty(prop, staticValue) {
+    try {
+        if (!prop) return;
+        for (var i = prop.numKeys - 1; i >= 0; i--) {
+            prop.removeKey(i);
+        }
+        prop.setTimeVarying(false);
+        prop.setValue(staticValue, true);
+    } catch (e) {}
+}
+
 function $$eh_applyMotionEffect(kind, paramValue) {
     try {
         var seq = app.project.activeSequence;
@@ -452,6 +467,15 @@ function $$eh_applyMotionEffect(kind, paramValue) {
         var positionProp = $$eh_findComponentProperty(clip, "Motion", "Position");
         paramValue = parseFloat(paramValue);
 
+        // True default Motion values - computed from the sequence's own
+        // frame size rather than read back from the properties themselves,
+        // since a prior Quick Edit apply may have left them keyframed.
+        var seqSettings = seq.getSettings();
+        var centerPos = [seqSettings.videoFrameWidth / 2, seqSettings.videoFrameHeight / 2];
+
+        $$eh_resetMotionProperty(scaleProp, 100);
+        $$eh_resetMotionProperty(positionProp, centerPos);
+
         if (kind === "zoomIn" || kind === "zoomOut") {
             if (!scaleProp) return $$eh_err("Could not find the Motion/Scale property on this clip.");
             var duration = Math.min(Math.max(paramValue, 0.1), Math.max(clipResult.duration, 0.2));
@@ -468,8 +492,7 @@ function $$eh_applyMotionEffect(kind, paramValue) {
         if (kind === "shake" || kind === "impactPunch") {
             if (!positionProp) return $$eh_err("Could not find the Motion/Position property on this clip.");
             var intensity = Math.max(paramValue, 1);
-            var basePos = positionProp.getValue();
-            var baseX = basePos[0], baseY = basePos[1];
+            var baseX = centerPos[0], baseY = centerPos[1];
             var shakeDuration = 0.35;
             var steps = 8;
             positionProp.setTimeVarying(true);
