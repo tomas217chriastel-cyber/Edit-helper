@@ -131,10 +131,14 @@ function runFfmpegLoudnorm(filePath, targetI) {
     return new Promise((resolve) => {
         const args = ["-i", filePath, "-af", `loudnorm=I=${targetI}:TP=-1.5:LRA=11:print_format=json`, "-f", "null", "-"];
         execFile(settings.ffmpegPath, args, { maxBuffer: 1024 * 1024 * 20 }, (err, stdout, stderr) => {
+            if (err && err.code === "ENOENT") {
+                resolve({ ok: false, error: `ffmpeg not found ("${settings.ffmpegPath}" - Premiere couldn't launch it). Check the ffmpeg path in Settings, or that ffmpeg is on PATH.` });
+                return;
+            }
             const text = stderr || "";
             const match = text.match(/\{[\s\S]*\}/);
             if (!match) {
-                resolve({ ok: false, error: "ffmpeg did not return loudness data. Is ffmpeg installed and on PATH?" });
+                resolve({ ok: false, error: "ffmpeg ran but returned no loudness data" + (err ? ": " + err.message : " - unexpected output.") });
                 return;
             }
             try {
@@ -175,6 +179,7 @@ $("btnNormalize").addEventListener("click", async () => {
     const cache = new Map();
     const entries = [];
     let failures = 0;
+    let lastFailureReason = "";
 
     for (let i = 0; i < clips.length; i++) {
         const clip = clips[i];
@@ -186,14 +191,14 @@ $("btnNormalize").addEventListener("click", async () => {
             cache.set(clip.mediaPath, measurement);
         }
 
-        if (!measurement.ok) { failures++; continue; }
+        if (!measurement.ok) { failures++; lastFailureReason = measurement.error; continue; }
 
         const gainDb = computeGainDb(measurement.inputI, measurement.inputTp, targetI);
         entries.push({ trackIndex: clip.trackIndex, clipIndex: clip.clipIndex, gainDb: gainDb });
     }
 
     if (!entries.length) {
-        setStatus("Could not measure any clips. " + (failures ? "Make sure ffmpeg is installed (see Settings)." : ""), true);
+        setStatus("Could not measure any clips. " + (lastFailureReason || "Make sure ffmpeg is installed (see Settings)."), true);
         return;
     }
 
