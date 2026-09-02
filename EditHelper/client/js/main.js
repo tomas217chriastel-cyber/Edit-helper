@@ -630,14 +630,17 @@ function downloadFile(url, destPath) {
 // yt-dlp is a separate, user-installed tool - not something bundled here.
 // It downloads the whole source video (YouTube's API doesn't expose a way
 // to fetch just a "meme moment" - trim the result down in Premiere).
+// Same multi-word command support as Whisper's path - pip often installs
+// the yt-dlp launcher somewhere not on PATH, especially on Windows, so
+// "python -m yt_dlp" needs to work as a fallback too.
+function ytDlpCommand() {
+    const parts = settings.ytDlpPath.trim().split(/\s+/);
+    return { command: parts[0], baseArgs: parts.slice(1) };
+}
+
 function downloadYoutubeVideo(url, outPath) {
     return new Promise((resolve) => {
-        // Same multi-word command support as Whisper's path - pip often
-        // installs the yt-dlp launcher somewhere not on PATH, especially on
-        // Windows, so "python -m yt_dlp" needs to work as a fallback too.
-        const commandParts = settings.ytDlpPath.trim().split(/\s+/);
-        const command = commandParts[0];
-        const baseArgs = commandParts.slice(1);
+        const { command, baseArgs } = ytDlpCommand();
         const args = baseArgs.concat(["-f", "mp4/best", "-o", outPath, url]);
         execFile(command, args, { maxBuffer: 1024 * 1024 * 200 }, (err, stdout, stderr) => {
             if (err) {
@@ -645,6 +648,44 @@ function downloadYoutubeVideo(url, outPath) {
                 return;
             }
             resolve({ ok: true });
+        });
+    });
+}
+
+// yt-dlp can search YouTube directly via its "ytsearchN:query" pseudo-URL,
+// with no API key needed - same tool already used for downloading. Uses
+// --flat-playlist for speed (a real per-video metadata fetch for every
+// search result would be much slower), which means duration/view-count
+// aren't available here, so the length/sort filters only apply to the
+// official API search. Thumbnails use YouTube's public, key-free static
+// image CDN (predictable from the video ID) since flat-playlist mode
+// doesn't reliably return thumbnail URLs itself.
+function searchYoutubeViaYtDlp(query, genre, count) {
+    return new Promise((resolve) => {
+        const q = buildYoutubeQuery(query, genre);
+        const { command, baseArgs } = ytDlpCommand();
+        const args = baseArgs.concat([`ytsearch${count}:${q}`, "--flat-playlist", "--dump-json", "--no-warnings"]);
+        execFile(command, args, { maxBuffer: 1024 * 1024 * 50 }, (err, stdout) => {
+            const lines = (stdout || "").split("\n").filter(Boolean);
+            if (!lines.length) {
+                resolve({ results: [], error: err ? "yt-dlp search failed: " + err.message + "\nIs yt-dlp installed? (pip install -U yt-dlp)" : null });
+                return;
+            }
+            const results = [];
+            for (const line of lines) {
+                try {
+                    const item = JSON.parse(line);
+                    if (!item.id) continue;
+                    results.push({
+                        source: "youtube",
+                        title: item.title || "(untitled)",
+                        thumb: `https://i.ytimg.com/vi/${item.id}/mqdefault.jpg`,
+                        full: `https://www.youtube.com/watch?v=${item.id}`,
+                        ext: ".mp4"
+                    });
+                } catch (e) { /* skip a line that isn't valid JSON */ }
+            }
+            resolve({ results, error: null });
         });
     });
 }
@@ -811,23 +852,28 @@ let lastResults = [];
 let selectedResultIndex = -1;
 let searchState = {
     query: "", genre: "", typeFilter: "all",
-    youtubeContentType: "video", youtubeDuration: "medium", youtubeOrder: "relevance",
-    giphyCursor: 0, tenorCursor: null, youtubeCursor: null
+    youtubeContentType: "video", youtubeDuration: "medium", youtubeOrder: "relevance", youtubeSearchEngine: "api",
+    giphyCursor: 0, tenorCursor: null, youtubeCursor: null, ytdlpFetchedCount: 0
 };
 let playlistContext = null; // { playlistId, title, cursor } once a playlist is opened
 
 function updateYoutubeOptionsVisibility() {
     const isYoutube = $("typeFilter").value === "youtube";
+    const isYtdlp = $("youtubeSearchEngine").value === "ytdlp";
     $("youtubeOptions").hidden = !isYoutube;
     $("youtubeHint").hidden = !isYoutube;
+    $("youtubeVideoOnlyOptions").hidden = isYtdlp;
+    $("ytdlpSearchHint").hidden = !isYtdlp;
 }
 $("typeFilter").addEventListener("change", updateYoutubeOptionsVisibility);
+$("youtubeSearchEngine").addEventListener("change", updateYoutubeOptionsVisibility);
 updateYoutubeOptionsVisibility();
 
 async function fetchResultsPage(params, isFirstPage) {
     const effectiveQuery = params.genre && !params.query ? params.genre : params.query;
     let results = [];
     let anyMore = false;
+    let error = null;
 
     if (playlistContext) {
         const pl = await fetchPlaylistVideos(playlistContext.playlistId, isFirstPage ? null : playlistContext.cursor);
@@ -841,10 +887,20 @@ async function fetchResultsPage(params, isFirstPage) {
         }
     } else if (params.typeFilter === "youtube") {
         if (params.youtubeContentType === "playlist") {
+            // Playlist search always uses the official API - yt-dlp doesn't
+            // have an equivalent playlist-search mode.
             const pl = await searchYoutubePlaylists(params.query, params.genre, isFirstPage ? null : searchState.youtubeCursor);
             results = pl.results;
             searchState.youtubeCursor = pl.cursor;
             anyMore = !!pl.cursor;
+        } else if (params.youtubeSearchEngine === "ytdlp") {
+            const nextCount = isFirstPage ? 15 : searchState.ytdlpFetchedCount + 15;
+            const yt = await searchYoutubeViaYtDlp(params.query, params.genre, nextCount);
+            error = yt.error;
+            const already = isFirstPage ? 0 : searchState.ytdlpFetchedCount;
+            results = yt.results.slice(already);
+            searchState.ytdlpFetchedCount = yt.results.length;
+            anyMore = yt.results.length >= nextCount;
         } else {
             const yt = await searchYouTube(params.query, params.genre, isFirstPage ? null : searchState.youtubeCursor, params.youtubeDuration, params.youtubeOrder);
             results = yt.results;
@@ -867,7 +923,7 @@ async function fetchResultsPage(params, isFirstPage) {
         }
     }
 
-    return { results, anyMore };
+    return { results, anyMore, error };
 }
 
 $("btnSearch").addEventListener("click", async () => {
@@ -878,22 +934,26 @@ $("btnSearch").addEventListener("click", async () => {
         genre: $("genreFilter").value,
         typeFilter: $("typeFilter").value,
         youtubeContentType: $("youtubeContentType").value,
+        youtubeSearchEngine: $("youtubeSearchEngine").value,
         youtubeDuration: $("youtubeDuration").value,
         youtubeOrder: $("youtubeOrder").value,
         giphyCursor: 0,
         tenorCursor: null,
-        youtubeCursor: null
+        youtubeCursor: null,
+        ytdlpFetchedCount: 0
     };
 
     setStatus("Searching...");
     selectedResultIndex = -1;
 
-    const { results, anyMore } = await fetchResultsPage(searchState, true);
+    const { results, anyMore, error } = await fetchResultsPage(searchState, true);
     lastResults = results;
     renderResults(lastResults);
     $("btnLoadMore").hidden = !anyMore;
 
-    if (!results.length) {
+    if (error) {
+        setStatus(error, true);
+    } else if (!results.length) {
         setStatus("No results. Check your API keys / local folder in Settings, or try a different search.", true);
     } else {
         setStatus(`Found ${results.length} result(s).`);
@@ -902,7 +962,8 @@ $("btnSearch").addEventListener("click", async () => {
 
 $("btnLoadMore").addEventListener("click", async () => {
     setStatus("Loading more...");
-    const { results, anyMore } = await fetchResultsPage(searchState, false);
+    const { results, anyMore, error } = await fetchResultsPage(searchState, false);
+    if (error) { setStatus(error, true); return; }
     lastResults = lastResults.concat(results);
     renderResults(lastResults);
     $("btnLoadMore").hidden = !anyMore;
