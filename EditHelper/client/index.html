@@ -1,0 +1,199 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8" />
+    <title>Edit Helper</title>
+    <link rel="stylesheet" href="css/style.css" />
+</head>
+<body>
+    <div class="tabs">
+        <div class="tab active" data-target="viewTimeline">Timeline</div>
+        <div class="tab" data-target="viewSubtitles">Subtitles</div>
+        <div class="tab" data-target="viewQuickEdit">Quick Edit</div>
+        <div class="tab" data-target="viewMemes">Memes</div>
+        <div class="tab" data-target="viewSettings">Settings</div>
+    </div>
+
+    <div id="viewTimeline" class="panel-view active">
+        <section class="card">
+            <h2>Remove empty gaps</h2>
+            <label>Scope</label>
+            <select id="gapScope">
+                <option value="all">All tracks</option>
+                <option value="video">Video tracks only</option>
+                <option value="audio">Audio tracks only</option>
+            </select>
+            <label>Minimum gap length to remove (seconds)</label>
+            <input type="number" id="minGap" step="0.1" min="0" value="0.2" />
+            <button id="btnRemoveGaps">Remove Gaps</button>
+        </section>
+
+        <section class="card">
+            <h2>One-click audio loudness</h2>
+            <label>Apply to</label>
+            <select id="normalizeScope">
+                <option value="selected">Selected clips</option>
+                <option value="all">All audio clips on timeline</option>
+            </select>
+            <label>Target loudness (LUFS)</label>
+            <input type="number" id="targetLufs" step="1" value="-16" />
+            <button id="btnNormalize">Normalize Audio</button>
+            <p class="hint">Requires <b>ffmpeg</b> on your system PATH (used to measure loudness). Set a custom path in Settings if needed.</p>
+        </section>
+    </div>
+
+    <div id="viewSubtitles" class="panel-view">
+        <section class="card">
+            <h2>Auto-transcribe &amp; styled subtitles</h2>
+            <p class="hint">Click a clip on the timeline first, then generate. The subtitles are rendered as a transparent, animated overlay clip and dropped in above your footage - your original clip isn't touched.</p>
+            <label>Spoken language</label>
+            <select id="subtitleLanguage">
+                <option value="auto">Auto-detect</option>
+                <option value="czech">Czech</option>
+                <option value="slovak">Slovak</option>
+                <option value="english">English</option>
+            </select>
+            <label>Subtitle style</label>
+            <select id="subtitleStyle">
+                <option value="boldPop">Bold Pop - white / black stroke</option>
+                <option value="yellowImpact">Yellow Impact - black stroke</option>
+                <option value="neonGlow">Neon Glow - white / magenta</option>
+                <option value="cleanMinimal">Clean Minimal - soft shadow</option>
+                <option value="karaokeBox">Karaoke Box - solid background</option>
+            </select>
+            <div id="stylePreview" class="style-preview"></div>
+
+            <label class="checkbox-label"><input type="checkbox" id="strokeEnabled" checked /> Outline / stroke</label>
+            <input type="range" id="strokeWidth" min="0" max="10" step="1" value="4" />
+            <div class="slider-value" id="strokeWidthValue">Stroke width: 4</div>
+
+            <label>Glow</label>
+            <input type="range" id="glowAmount" min="0" max="20" step="1" value="0" />
+            <div class="slider-value" id="glowAmountValue">Glow: off</div>
+
+            <button id="btnGenerateSubtitles">Transcribe &amp; Insert Styled Subtitles (Animated Overlay)</button>
+            <p class="hint">Requires <b>Whisper</b> (<code>pip install -U openai-whisper</code>) and <b>ffmpeg</b> on PATH. For the intended look, install the free <b>Poppins</b> font family (Google Fonts) on your system.</p>
+            <p class="hint"><b>Note:</b> this mode renders the captions as a burned-in video overlay with the pop animation - it looks great but the text itself isn't editable afterward (you'd re-run this to change wording). If you want subtitles you can double-click and edit directly on the timeline, tell me and I'll build a plain-text native-caption mode for you as an alternative (no pop animation, since Premiere's native captions don't support keyframed animation).</p>
+        </section>
+    </div>
+
+    <div id="viewQuickEdit" class="panel-view">
+        <section class="card">
+            <h2>Your Premiere presets</h2>
+            <p class="hint">Double-click a preset to apply it to the selected clip on the timeline. Set your presets folder in Settings if the list is empty.</p>
+            <button id="btnRefreshPresets">Refresh List</button>
+            <div id="presetsList" class="presets-list"></div>
+        </section>
+
+        <section class="card">
+            <h2>Quick effects</h2>
+            <p class="hint">Select a clip on the timeline, adjust the slider, then double-click (or press Apply) on an effect.</p>
+            <div id="quickEffectsList" class="quick-effects-list"></div>
+        </section>
+    </div>
+
+    <div id="viewMemes" class="panel-view">
+        <section class="card">
+            <h2>Find a meme / GIF / image</h2>
+            <input type="text" id="searchQuery" placeholder="Search keyword (e.g. 'explosion', 'facepalm')" />
+            <label>Genre / topic filter</label>
+            <select id="genreFilter">
+                <option value="">Any</option>
+                <option value="recent">Recently Downloaded</option>
+                <option value="minecraft">Minecraft</option>
+                <option value="roblox">Roblox</option>
+                <option value="trends">Trends</option>
+                <option value="gaming">Gaming</option>
+                <option value="documentary">Documentary</option>
+                <option value="nature">Nature</option>
+                <option value="tech">Tech</option>
+            </select>
+            <label>Source</label>
+            <select id="typeFilter">
+                <option value="all">Internet + local folder</option>
+                <option value="gif">Internet (GIFs) only</option>
+                <option value="local">Local folder only</option>
+                <option value="youtube">YouTube meme videos</option>
+            </select>
+
+            <div id="youtubeOptions" hidden>
+                <label>YouTube content type</label>
+                <select id="youtubeContentType">
+                    <option value="video">Videos</option>
+                    <option value="playlist">Playlists (compilations - double-click one to open it, needs API search)</option>
+                </select>
+                <label>Search engine</label>
+                <select id="youtubeSearchEngine">
+                    <option value="api">Official YouTube API (needs a key in Settings)</option>
+                    <option value="ytdlp">yt-dlp (no key needed - same tool used for downloading)</option>
+                </select>
+                <div id="youtubeVideoOnlyOptions">
+                    <label>Video length</label>
+                    <select id="youtubeDuration">
+                        <option value="medium">Skip Shorts (4+ min)</option>
+                        <option value="long">Compilations only (20+ min)</option>
+                        <option value="any">Any length</option>
+                    </select>
+                    <label>Sort by</label>
+                    <select id="youtubeOrder">
+                        <option value="relevance">Most Relevant</option>
+                        <option value="viewCount">Most Popular</option>
+                    </select>
+                </div>
+                <p class="hint" id="ytdlpSearchHint" hidden>yt-dlp search doesn't support the length/sort filters above (those need the official API), and - like the download step - is a third-party tool acting outside YouTube's own Terms of Service, not an official method.</p>
+            </div>
+
+            <button id="btnSearch">Search</button>
+            <div id="playlistBreadcrumb" class="hint" hidden></div>
+            <div id="resultsGrid" class="results-grid"></div>
+            <button id="btnLoadMore" class="secondary-button" hidden>Load More</button>
+            <p class="hint" id="youtubeHint" hidden>YouTube results need a free YouTube Data API key in Settings. Inserting a result also needs <b>yt-dlp</b> installed (downloads the full source video - trim it to the exact moment in Premiere afterward).</p>
+            <label>Insert mode</label>
+            <select id="insertMode">
+                <option value="overwrite">Overlay at playhead (don't shift timeline)</option>
+                <option value="insert">Insert at playhead (ripples timeline)</option>
+            </select>
+            <button id="btnInsert">Insert Selected at Playhead</button>
+        </section>
+    </div>
+
+    <div id="viewSettings" class="panel-view">
+        <section class="card">
+            <h2>API Keys</h2>
+            <p class="hint">Free keys: Giphy Developers portal, Google Tenor API, YouTube Data API v3 (Google Cloud Console). Stored only on this machine.</p>
+            <label>Giphy API key</label>
+            <input type="text" id="giphyKey" placeholder="Giphy API key" />
+            <label>Tenor API key</label>
+            <input type="text" id="tenorKey" placeholder="Tenor API key" />
+            <label>YouTube Data API key</label>
+            <input type="text" id="youtubeKey" placeholder="YouTube Data API v3 key" />
+        </section>
+        <section class="card">
+            <h2>Local meme/GIF folder</h2>
+            <input type="text" id="localFolder" placeholder="C:\Memes or /Users/you/Memes" />
+            <button id="btnBrowseFolder">How do I set this?</button>
+        </section>
+        <section class="card">
+            <h2>Premiere presets folder</h2>
+            <p class="hint">Typically <code>Documents\Adobe\Premiere Pro\&lt;version&gt;\Presets</code> (Windows) or <code>~/Documents/Adobe/Premiere Pro/&lt;version&gt;/Presets</code> (Mac).</p>
+            <input type="text" id="presetsFolder" placeholder="Path to your Premiere Presets folder" />
+        </section>
+        <section class="card">
+            <h2>Advanced</h2>
+            <label>ffmpeg path</label>
+            <input type="text" id="ffmpegPath" placeholder="ffmpeg" />
+            <label>Whisper path (speech-to-text)</label>
+            <input type="text" id="whisperPath" placeholder="whisper" />
+            <label>yt-dlp path (YouTube video download)</label>
+            <input type="text" id="ytDlpPath" placeholder="yt-dlp" />
+            <p class="hint">Optional, only needed to insert a YouTube search result. Install with <code>pip install -U yt-dlp</code>. Downloading video from YouTube this way is outside YouTube's own Terms of Service (it's a third-party tool, not something YouTube provides) - it's your call whether that's acceptable for your use; searching itself (above) uses YouTube's official API and has no such issue.</p>
+        </section>
+        <button id="btnSaveSettings">Save Settings</button>
+    </div>
+
+    <div id="statusBar" class="status">Loading...</div>
+
+    <script src="js/CSInterface.js"></script>
+    <script src="js/main.js"></script>
+</body>
+</html>
